@@ -1,0 +1,45 @@
+package main
+
+import(
+	"context"
+	"log"
+	"net/http"
+	"os"
+
+	"desk/internal/httpapi"
+	"desk/internal/db"
+	"desk/internal/config"
+)
+
+func main(){
+	cfg := config.Load()
+	cmd := "serve"
+	if len(os.Args) > 1{
+		cmd = os.Args[1]
+	}
+
+	switch cmd {
+	case "serve":
+		if err :=runServe(cfg);err!=nil {
+			log.Fatal(err)
+			}
+	case "chat","show":
+		log.Fatal("no")
+	default:
+		log.Fatalf("unknown command: %s", cmd)
+	}
+}
+
+func runServe(cfg config.Config) error {
+	ctx := context.Background()
+	sqlDB, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	if err := db.Migrate(ctx, sqlDB, cfg.MigrationsDir); err != nil {
+		return err
+	}
+	log.Printf("desk serve %s", cfg.HTTPAddr)
+	return http.ListenAndServe(cfg.HTTPAddr, httpapi.NewMux(sqlDB))
+}
