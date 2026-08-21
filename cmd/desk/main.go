@@ -9,6 +9,9 @@ import(
 	"desk/internal/httpapi"
 	"desk/internal/db"
 	"desk/internal/config"
+	"desk/internal/event"
+	"desk/internal/session"
+	"desk/internal/run"
 )
 
 func main(){
@@ -40,6 +43,15 @@ func runServe(cfg config.Config) error {
 	if err := db.Migrate(ctx, sqlDB, cfg.MigrationsDir); err != nil {
 		return err
 	}
+
+	ev := event.NewStore(sqlDB)
+	mux := httpapi.NewMux(httpapi.Deps{
+		DB:        sqlDB,
+		Workspace: cfg.Workerspace,
+		Sessions:  session.NewStore(sqlDB),
+		Runs:      run.NewStore(sqlDB),
+		Messages:  run.NewService(sqlDB, ev),
+	})
 	log.Printf("desk serve %s", cfg.HTTPAddr)
-	return http.ListenAndServe(cfg.HTTPAddr, httpapi.NewMux(sqlDB))
+	return http.ListenAndServe(cfg.HTTPAddr, mux)
 }
