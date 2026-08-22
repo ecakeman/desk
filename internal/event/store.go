@@ -14,6 +14,12 @@ func NewStore(db *sql.DB)*Store{
 	return &Store{DB:db}
 }
 
+type Event struct{
+	Seq int `json:"seq"`
+	Type string `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
 func (s *Store) Append(ctx context.Context,tx *sql.Tx,runID,typ string,payload any)error{
 	raw,err:=json.Marshal(payload)
 	if err!=nil{
@@ -31,4 +37,24 @@ func (s *Store) Append(ctx context.Context,tx *sql.Tx,runID,typ string,payload a
 		runID,seq,typ,raw,
 	)
 	return err
+}
+
+func (s *Store) ListAfter(ctx context.Context,runID string,after int)([]Event,error){
+	rows,err:=s.DB.QueryContext(ctx,
+	`SELECT seq,type,payload FROM events WHERE run_id=$1 AND seq>$2 ORDER BY seq`,
+	runID,after,
+	)
+	if err!=nil{
+		return nil,err
+	}
+	defer rows.Close()
+	var out []Event
+	for rows.Next(){
+		var e Event
+		if err:=rows.Scan(&e.Seq,&e.Type,&e.Payload);err!=nil{
+			return nil,err
+		}
+		out=append(out,e)
+	}
+	return out,rows.Err()
 }

@@ -51,6 +51,7 @@ func runServe(cfg config.Config) error {
 		Sessions:  session.NewStore(sqlDB),
 		Runs:      run.NewStore(sqlDB),
 		Messages:  run.NewService(sqlDB, ev),
+		Events:    ev,
 	})
 	log.Printf("desk serve %s", cfg.HTTPAddr)
 	return http.ListenAndServe(cfg.HTTPAddr, mux)
