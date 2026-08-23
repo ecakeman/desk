@@ -1,3 +1,4 @@
 .env
 /desk
 /bin/
+desk/internal/run/status_test.go

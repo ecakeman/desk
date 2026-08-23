@@ -34,3 +34,24 @@ func (s *Store) Get(ctx context.Context, id string) (*Run, error) {
 	}
 	return &out, nil
 }
+
+func Transition(ctx context.Context, tx *sql.Tx, id, from, to string) error {
+	if !Can(from, to) {
+		return ErrConflict
+	}
+	res,err := tx.ExecContext(ctx,
+		`UPDATE runs SET status=$1,updated_at=now() WHERE id=$2 AND status=$3`,
+		to,id,from,
+	)
+	if err != nil {
+		return err
+	}
+	n,err :=res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrConflict
+	}
+	return nil
+}
