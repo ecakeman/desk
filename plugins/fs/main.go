@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"time"
+
+	"desk/internal/plugin"
 )
 
 type req struct{
@@ -24,21 +27,27 @@ func main(){
 		write(resp{OK: false,Error: err.Error()})
 		os.Exit(1)
 	}
-	if in.Op != "read"{
-		write(resp{ID: in.ID,OK: false,Error: "unknown_op: " + in.Op})
+	switch in.Op{
+	case "read":
+		path,_ := in.Args["path"].(string)
+		rel, err := plugin.ResolveInWorkspace(".", path)
+        if err != nil{
+			write(resp{ID: in.ID, OK: false, Error: err.Error()})
+			os.Exit(1)
+		}
+		b, err := os.ReadFile(rel)
+		if err != nil{
+			write(resp{ID: in.ID, OK: false, Error: err.Error()})
+			os.Exit(1)
+		}
+		write(resp{ID: in.ID, OK: true, Data: map[string]string{"content": string(b)}})
+	case "sleep":
+		time.Sleep(10 * time.Second)
+		write(resp{ID: in.ID,OK:true})
+	default:
+		write(resp{ID: in.ID, OK: false, Error: "unknown_op: " + in.Op})
 		os.Exit(1)
 	}
-	path,_ :=in.Args["path"].(string)
-	if path == ""{
-		write(resp{ID: in.ID,OK: false,Error: "path_required"})
-		os.Exit(1)
-	}
-	b,err := os.ReadFile(path)
-	if err != nil{
-		write(resp{ID: in.ID,OK: false,Error: err.Error()})
-		os.Exit(1)
-	}
-	write(resp{ID: in.ID,OK: true,Data: map[string]string{"content":string(b)}})
 }
 
 func write(r resp){

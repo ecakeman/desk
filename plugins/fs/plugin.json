@@ -1,6 +1,6 @@
 {
     "name": "fs",
     "command": "fs",
-    "ops": ["read"],
+    "ops": ["read","sleep"],
     "risk": "read"
 }
