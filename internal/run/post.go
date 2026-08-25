@@ -6,11 +6,15 @@ import (
 
 	"desk/internal/event"
 	"desk/internal/ids"
+	"desk/internal/plugin"
+	"desk/internal/worker"
 )
 
 type Service struct {
 	DB     *sql.DB
 	Events *event.Store
+	Plugins *plugin.Registry
+	Worker worker.Worker
 }
 
 func NewService(db *sql.DB, events *event.Store) *Service {
@@ -48,6 +52,13 @@ func (s *Service) PostUserMessage(ctx context.Context, sessionID, text, workspac
 	}
 	if err := tx.Commit(); err != nil {
 		return "", err
+	}
+	if s.Worker != nil && s.Plugins != nil {
+		go func() {
+			if err := s.Drive(context.Background(), runID); err != nil {
+				_ = s.Fail(context.Background(), runID, err.Error())
+			}
+		}()
 	}
 	return runID, nil
 }

@@ -13,6 +13,7 @@ type Config struct{
 	Workerspace string
 	DatabaseURL string
 	MigrationsDir string
+	PluginsDir string
 	Model ModelConfig
 }
 
@@ -22,6 +23,7 @@ func Load() Config{
 		Workerspace: getenv("DESK_WORKERSAPCE", "."),
 		DatabaseURL: getenv("DESK_DATABASE_URL", "postgres://desk:desk@localhost:5432/desk?sslmode=disable"),
 		MigrationsDir: getenv("DESK_MIGRATION_DIR", "migrations"),
+		PluginsDir: getenv("DESK_PLUGINS_DIR", "plugins"),
 		Model: ModelConfig{
 			BaseURL: getenv("DESK_MODEL_BASE_URL", ""),
 			APIKey: getenv("DESK_MODEL_API_KEY", ""),

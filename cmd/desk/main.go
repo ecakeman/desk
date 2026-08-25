@@ -12,6 +12,8 @@ import(
 	"desk/internal/event"
 	"desk/internal/session"
 	"desk/internal/run"
+	"desk/internal/plugin"
+	"desk/internal/worker"
 )
 
 func main(){
@@ -45,12 +47,19 @@ func runServe(cfg config.Config) error {
 	}
 
 	ev := event.NewStore(sqlDB)
+ 	reg, err := plugin.Load(cfg.PluginsDir, cfg.Workerspace)
+ 	if err != nil {
+		return err
+	}
+ 	svc := run.NewService(sqlDB, ev)
+ 	svc.Plugins = reg
+ 	svc.Worker = worker.Fake{}
 	mux := httpapi.NewMux(httpapi.Deps{
 		DB:        sqlDB,
 		Workspace: cfg.Workerspace,
 		Sessions:  session.NewStore(sqlDB),
 		Runs:      run.NewStore(sqlDB),
-		Messages:  run.NewService(sqlDB, ev),
+		Messages:  svc,
 		Events:    ev,
 	})
 	log.Printf("desk serve %s", cfg.HTTPAddr)

@@ -1,7 +1,12 @@
 package event
 
 const (
-	TypeRunCreated  = "run.created"
-	TypeMessageUser = "message.user"
-	TypeRunFailed = "run.failed"
+	TypeRunCreated        = "run.created"
+	TypeMessageUser       = "message.user"
+	TypeRunFailed         = "run.failed"
+	TypeToolRequested     = "tool.requested"
+	TypeToolStarted       = "tool.started"
+	TypeToolCompleted     = "tool.completed"
+	TypeRunCompleted      = "run.completed"
+	TypeEpisodeCompacted  = "episode.compacted"
 )
