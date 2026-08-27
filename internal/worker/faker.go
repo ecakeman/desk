@@ -21,3 +21,5 @@ func (Fake) Handle(in In) (*Out, error) {
 		return nil, fmt.Errorf("unknown t: %s", in.T)
 	}
 }
+
+func (Fake) Done(string) {}

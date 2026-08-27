@@ -19,6 +19,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 	).Scan(&sessionID); err != nil {
 		return err
 	}
+	defer s.Worker.Done(runID)
 
 	msgs, err := s.Events.Messages(ctx, sessionID, runID)
 	if err != nil {
@@ -48,16 +49,17 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 			}
 			id := out.ID
 			out, err = s.Worker.Handle(worker.In{
-				T:    "tool.result",
-				ID:   id,
-				OK:   true,
-				Data: data,
+				T:     "tool.result",
+				RunID: runID,
+				ID:    id,
+				OK:    true,
+				Data:  data,
 			})
 			if err != nil {
 				return err
 			}
 		case "turn.finish":
-			return s.finish(ctx, runID)
+			return s.finish(ctx,runID,out.Text)
 		case "turn.fail":
 			return fmt.Errorf("%s", out.Error)
 		default:
@@ -100,12 +102,19 @@ func (s *Service) runTool(ctx context.Context, runID string, req *worker.Out) (j
 	return data, nil
 }
 
-func (s *Service) finish(ctx context.Context, runID string) error {
+func (s *Service) finish(ctx context.Context, runID, text string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if text != "" {
+		if err := s.Events.Append(ctx, tx, runID, event.TypeMessageCompleted, map[string]string{
+			"text": text,
+		}); err != nil {
+			return err
+		}
+	}
 	if err := Transition(ctx, tx, runID, StatusRunning, StatusCompleted); err != nil {
 		return err
 	}

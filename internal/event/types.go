@@ -9,4 +9,5 @@ const (
 	TypeToolCompleted     = "tool.completed"
 	TypeRunCompleted      = "run.completed"
 	TypeEpisodeCompacted  = "episode.compacted"
+	TypeMessageCompleted  = "message.completed"
 )

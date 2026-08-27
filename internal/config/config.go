@@ -14,7 +14,10 @@ type Config struct{
 	DatabaseURL string
 	MigrationsDir string
 	PluginsDir string
+	Python string
+    Agent  string
 	Model ModelConfig
+	
 }
 
 func Load() Config{
@@ -24,6 +27,8 @@ func Load() Config{
 		DatabaseURL: getenv("DESK_DATABASE_URL", "postgres://desk:desk@localhost:5432/desk?sslmode=disable"),
 		MigrationsDir: getenv("DESK_MIGRATION_DIR", "migrations"),
 		PluginsDir: getenv("DESK_PLUGINS_DIR", "plugins"),
+		Python: getenv("DESK_PYTHON", "python3"),
+		Agent:  getenv("DESK_AGENT", "agent/worker.py"),
 		Model: ModelConfig{
 			BaseURL: getenv("DESK_MODEL_BASE_URL", ""),
 			APIKey: getenv("DESK_MODEL_API_KEY", ""),

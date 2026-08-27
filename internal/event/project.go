@@ -44,6 +44,14 @@ func (s *Store) Messages(ctx context.Context, sessionID, currentRunID string) ([
 				return nil, err
 			}
 			out = append(out, map[string]any{"role": "tool", "content": string(p.Data)})
+		case TypeMessageCompleted:
+			var p struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return nil, err
+			}
+			out = append(out, map[string]any{"role": "assistant", "content": p.Text})
 		}
 	}
 	return out, rows.Err()

@@ -53,7 +53,11 @@ func runServe(cfg config.Config) error {
 	}
  	svc := run.NewService(sqlDB, ev)
  	svc.Plugins = reg
- 	svc.Worker = worker.Fake{}
+	svc.Worker = worker.NewProcess(cfg.Python, cfg.Agent, append(os.Environ(),
+		"DESK_MODEL_BASE_URL="+cfg.Model.BaseURL,
+		"DESK_MODEL_API_KEY="+cfg.Model.APIKey,
+		"DESK_MODEL_MODEL="+cfg.Model.Model,
+	))
 	mux := httpapi.NewMux(httpapi.Deps{
 		DB:        sqlDB,
 		Workspace: cfg.Workerspace,
