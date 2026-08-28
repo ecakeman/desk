@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"errors"
 
 	"desk/internal/approve"
 	"desk/internal/event"
 	"desk/internal/plugin"
 	"desk/internal/worker"
 )
+
+var errDenied = errors.New("tool_denied")
 
 func (s *Service) Drive(ctx context.Context, runID string) error {
 	var sessionID string
@@ -44,10 +47,17 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 		switch out.T {
 		case "tool.request":
 			data, err := s.runTool(ctx, runID, out)
+			id := out.ID
+			if errors.Is(err, errDenied) {
+				out, err = s.ask(ctx, runID, worker.In{T: "tool.denied", ID: id})
+				if err != nil {
+					return err
+				}
+				continue
+			}
 			if err != nil {
 				return err
 			}
-			id := out.ID
 			out, err = s.ask(ctx, runID, worker.In{
 				T:     "tool.result",
 				RunID: runID,
@@ -70,19 +80,34 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 }
 
 func (s *Service) runTool(ctx context.Context, runID string, req *worker.Out) (json.RawMessage, error) {
-	if err := s.appendOne(ctx, runID, event.TypeToolRequested, map[string]any{
+	seq, err := s.appendOne(ctx, runID, event.TypeToolRequested, map[string]any{
 		"id": req.ID, "name": req.Name, "args": req.Args,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
-	if approve.Decide(toolRisk(s.Plugins, req.Name)) != approve.Allow {
-		return nil, fmt.Errorf("need_approval")
+	switch approve.Decide(toolRisk(s.Plugins, req.Name)) {
+	case approve.Deny:
+		return nil, fmt.Errorf("denied")
+	case approve.Ask:
+		allow, err := s.waitDecision(ctx, runID)
+		if err != nil {
+			return nil, err
+		}
+		if !allow {
+			if _, err := s.appendOne(ctx, runID, event.TypeToolDenied, map[string]any{
+				"id": req.ID, "seq": seq, "name": req.Name,
+			}); err != nil {
+				return nil, err
+			}
+			return nil, errDenied
+		}
 	}
 	plug, op, err := splitTool(req.Name)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.appendOne(ctx, runID, event.TypeToolStarted, map[string]string{
+	if _, err := s.appendOne(ctx, runID, event.TypeToolStarted, map[string]string{
 		"id": req.ID, "name": req.Name,
 	}); err != nil {
 		return nil, err
@@ -96,7 +121,7 @@ func (s *Service) runTool(ctx context.Context, runID string, req *worker.Out) (j
 		Name string          `json:"name"`
 		Data json.RawMessage `json:"data"`
 	}{ID: req.ID, Name: req.Name, Data: data}
-	if err := s.appendOne(ctx, runID, event.TypeToolCompleted, payload); err != nil {
+	if _, err := s.appendOne(ctx, runID, event.TypeToolCompleted, payload); err != nil {
 		return nil, err
 	}
 	return data, nil
@@ -109,7 +134,7 @@ func (s *Service) finish(ctx context.Context, runID, text string) error {
 	}
 	defer tx.Rollback()
 	if text != "" {
-		if err := s.Events.Append(ctx, tx, runID, event.TypeMessageCompleted, map[string]string{
+		if _,err := s.Events.Append(ctx, tx, runID, event.TypeMessageCompleted, map[string]string{
 			"text": text,
 		}); err != nil {
 			return err
@@ -118,22 +143,23 @@ func (s *Service) finish(ctx context.Context, runID, text string) error {
 	if err := Transition(ctx, tx, runID, StatusRunning, StatusCompleted); err != nil {
 		return err
 	}
-	if err := s.Events.Append(ctx, tx, runID, event.TypeRunCompleted, map[string]string{}); err != nil {
+	if _,err := s.Events.Append(ctx, tx, runID, event.TypeRunCompleted, map[string]string{}); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Service) appendOne(ctx context.Context, runID, typ string, payload any) error {
+func (s *Service) appendOne(ctx context.Context, runID, typ string, payload any) (int,error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0,err
 	}
 	defer tx.Rollback()
-	if err := s.Events.Append(ctx, tx, runID, typ, payload); err != nil {
-		return err
+	seq,err := s.Events.Append(ctx, tx, runID, typ, payload)
+	if err != nil {
+		return 0,err
 	}
-	return tx.Commit()
+	return seq, tx.Commit()
 }
 
 func splitTool(name string) (string, string, error) {
@@ -159,8 +185,7 @@ func (s *Service) ask(ctx context.Context, runID string, in worker.In) (*worker.
 		if o.T != "message.delta" || o.Text == "" {
 			return nil
 		}
-		return s.appendOne(ctx, runID, event.TypeMessageDelta, map[string]string{
-			"text": o.Text,
-		})
+		_, err := s.appendOne(ctx, runID, event.TypeMessageDelta, map[string]string{"text": o.Text})
+		return err
 	})
 }

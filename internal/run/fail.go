@@ -22,7 +22,7 @@ func (s *Service) Fail(ctx context.Context, runID, reason string) error {
 	if err := Transition(ctx, tx, runID, cur, StatusFailed); err != nil {
 		return err
 	}
-	if err := s.Events.Append(ctx, tx, runID, event.TypeRunFailed, map[string]string{
+	if _,err := s.Events.Append(ctx, tx, runID, event.TypeRunFailed, map[string]string{
 		"reason": reason,
 	}); err != nil {
 		return err

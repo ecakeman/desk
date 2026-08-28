@@ -3,4 +3,5 @@
 /bin/
 *_test.go
 plugins/fs/fs
+plugins/search/search
 internal/plugin/smoke.go

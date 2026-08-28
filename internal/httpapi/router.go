@@ -93,6 +93,34 @@ func NewMux(d Deps) *gin.Engine {
 			}
 			c.JSON(http.StatusOK, out)
 		})
+		v1.POST("/runs/:id/decisions", func(c *gin.Context) {
+			var body struct {
+				Seq   int  `json:"seq"`
+				Allow bool `json:"allow"`
+			}
+			if err := c.ShouldBindJSON(&body); err != nil || body.Seq < 1 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "bad_seq"})
+				return
+			}
+			err := d.Messages.Decide(c.Request.Context(), c.Param("id"), body.Seq, body.Allow)
+			if errors.Is(err, sql.ErrNoRows) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+				return
+			}
+			if errors.Is(err, run.ErrBadSeq) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "bad_seq"})
+				return
+			}
+			if errors.Is(err, run.ErrNotWaiting) || errors.Is(err, run.ErrConflict) {
+				c.JSON(http.StatusConflict, gin.H{"error": "conflict"})
+				return
+			}
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+		})
 		v1.GET("/runs/:id/events", func(c* gin.Context){
 			runID:=c.Param("id")
 			if _,err:=d.Runs.Get(c.Request.Context(),runID);err != nil{

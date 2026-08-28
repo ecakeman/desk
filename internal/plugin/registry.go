@@ -45,10 +45,14 @@ func (r *Registry)Tools() []Tool{
 	for _,p :=range r.byName{
 		m := p.Manifest()
 		for _,op := range m.Ops{
+			risk := m.Risk
+			if op == "write" {
+				risk = "write"
+			}
 			out = append(out, Tool{
 				Name:        m.Name + "." + op,
 				Description: "plugin " + m.Name + " op " + op,
-				Risk:        m.Risk,
+				Risk:        risk,
 			})
 		}
 	}

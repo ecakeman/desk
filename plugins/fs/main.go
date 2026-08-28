@@ -41,6 +41,19 @@ func main(){
 			os.Exit(1)
 		}
 		write(resp{ID: in.ID, OK: true, Data: map[string]string{"content": string(b)}})
+	case "write":
+		path,_ := in.Args["path"].(string)
+		content,_ := in.Args["content"].(string)
+		rel, err := plugin.ResolveInWorkspace(".", path)
+		if err != nil{
+			write(resp{ID: in.ID, OK: false, Error: err.Error()})
+			os.Exit(1)
+		}
+		if err := os.WriteFile(rel, []byte(content), 0644); err != nil{
+			write(resp{ID: in.ID, OK: false, Error: err.Error()})
+			os.Exit(1)
+		}
+		write(resp{ID: in.ID, OK: true, Data: map[string]string{"path": rel}})
 	case "sleep":
 		time.Sleep(10 * time.Second)
 		write(resp{ID: in.ID,OK:true})

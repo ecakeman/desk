@@ -20,23 +20,32 @@ type Event struct{
 	Payload json.RawMessage `json:"payload"`
 }
 
-func (s *Store) Append(ctx context.Context,tx *sql.Tx,runID,typ string,payload any)error{
+func (s *Store) Append(ctx context.Context,tx *sql.Tx,runID,typ string,payload any)(int,error){
 	raw,err:=json.Marshal(payload)
 	if err!=nil{
-		return err
+		return 0,err
 	}
 	var seq int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(seq),0)+1 FROM events WHERE run_id=$1`,
 		runID,
 	).Scan(&seq); err!=nil{
-		return err
+		return 0,err
 	}
 	_,err=tx.ExecContext(ctx,
 		`INSERT INTO events (run_id,seq,type,payload) VALUES ($1,$2,$3,$4)`,
 		runID,seq,typ,raw,
 	)
-	return err
+	return seq,err
+}
+
+func (s *Store) Get(ctx context.Context, runID string, seq int) (Event, error) {
+	var e Event
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT seq,type,payload FROM events WHERE run_id=$1 AND seq=$2`,
+		runID, seq,
+	).Scan(&e.Seq, &e.Type, &e.Payload)
+	return e, err
 }
 
 func (s *Store) ListAfter(ctx context.Context,runID string,after int)([]Event,error){

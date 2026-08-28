@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"database/sql"
+	"sync"
 
 	"desk/internal/event"
 	"desk/internal/ids"
@@ -15,10 +16,13 @@ type Service struct {
 	Events *event.Store
 	Plugins *plugin.Registry
 	Worker worker.Worker
+
+	mu sync.Mutex
+	pending map[string]chan bool
 }
 
 func NewService(db *sql.DB, events *event.Store) *Service {
-	return &Service{DB: db, Events: events}
+	return &Service{DB: db, Events: events, pending: map[string]chan bool{}}
 }
 
 func (s *Service) PostUserMessage(ctx context.Context, sessionID, text, workspace string) (string, error) {
@@ -40,12 +44,12 @@ func (s *Service) PostUserMessage(ctx context.Context, sessionID, text, workspac
 	); err != nil {
 		return "", err
 	}
-	if err := s.Events.Append(ctx, tx, runID, event.TypeRunCreated, map[string]string{
+	if _,err := s.Events.Append(ctx, tx, runID, event.TypeRunCreated, map[string]string{
 		"session_id": sessionID,
 	}); err != nil {
 		return "", err
 	}
-	if err := s.Events.Append(ctx, tx, runID, event.TypeMessageUser, map[string]string{
+	if _,err := s.Events.Append(ctx, tx, runID, event.TypeMessageUser, map[string]string{
 		"text": text,
 	}); err != nil {
 		return "", err

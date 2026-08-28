@@ -1,0 +1,6 @@
+{
+    "name": "search",
+    "command": "search",
+    "ops": ["grep"],
+    "risk": "read"
+}

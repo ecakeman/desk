@@ -11,4 +11,5 @@ const (
 	TypeEpisodeCompacted  = "episode.compacted"
 	TypeMessageCompleted  = "message.completed"
 	TypeMessageDelta      = "message.delta"
+	TypeToolDenied        = "tool.denied"
 )
