@@ -40,7 +40,7 @@ def openai_tools(raw):
 def chat():
     body = {
         "model": MODEL,
-        "stream": False,
+        "stream": True,
         "messages": messages,
     }
     if tools:
@@ -54,33 +54,66 @@ def chat():
         },
         method="POST",
     )
+    acc = []
+    tcs = {}
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            data = json.loads(resp.read().decode())
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            while True:
+                raw = resp.readline()
+                if not raw:
+                    break
+                line = raw.decode().strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                obj = json.loads(data)
+                delta = (obj.get("choices") or [{}])[0].get("delta") or {}
+                if delta.get("content"):
+                    piece = delta["content"]
+                    acc.append(piece)
+                    print(json.dumps({"t": "message.delta", "text": piece}, ensure_ascii=False), flush=True)
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = tcs.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] += fn["name"]
+                    if fn.get("arguments"):
+                        slot["arguments"] += fn["arguments"]
     except urllib.error.HTTPError as e:
         return {"t": "turn.fail", "error": e.read().decode()[:500]}
     except Exception as e:
         return {"t": "turn.fail", "error": str(e)}
-    msg = data["choices"][0]["message"]
-    tcs = msg.get("tool_calls") or []
+
     if tcs:
-        messages.append(msg)
-        tc = tcs[0]
+        slot = tcs[min(tcs)]
         try:
-            args = json.loads(tc["function"].get("arguments") or "{}")
+            args = json.loads(slot["arguments"] or "{}")
         except json.JSONDecodeError:
             return {"t": "turn.fail", "error": "bad_tool_args"}
         if not isinstance(args, dict):
             args = {}
-        api_name = tc["function"]["name"]
+        api_name = slot["name"]
+        messages.append({
+            "role": "assistant",
+            "tool_calls": [{
+                "id": slot["id"] or "1",
+                "type": "function",
+                "function": {"name": api_name, "arguments": slot["arguments"]},
+            }],
+        })
         return {
             "t": "tool.request",
-            "id": tc.get("id") or "1",
+            "id": slot["id"] or "1",
             "name": api_to_host.get(api_name, api_name),
             "args": args,
         }
-    text = msg.get("content") or ""
-    messages.append(msg)
+    text = "".join(acc)
+    messages.append({"role": "assistant", "content": text})
     return {"t": "turn.finish", "text": text}
 
 

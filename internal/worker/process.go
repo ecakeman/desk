@@ -28,7 +28,7 @@ func NewProcess(python, script string, env []string) *Process {
 	return &Process{Python: python, Script: script, Env: env, procs: map[string]*child{}}
 }
 
-func (p *Process) Handle(in In) (*Out, error) {
+func (p *Process) Handle(in In, emit func(Out) error) (*Out, error) {
 	if in.RunID == "" {
 		return nil, fmt.Errorf("worker_exit")
 	}
@@ -41,16 +41,26 @@ func (p *Process) Handle(in In) (*Out, error) {
 		p.Done(in.RunID)
 		return nil, fmt.Errorf("worker_exit")
 	}
-	if !ch.out.Scan() {
-		p.Done(in.RunID)
-		return nil, fmt.Errorf("worker_exit")
+	for {
+		if !ch.out.Scan() {
+			p.Done(in.RunID)
+			return nil, fmt.Errorf("worker_exit")
+		}
+		var out Out
+		if err := json.Unmarshal(ch.out.Bytes(), &out); err != nil {
+			p.Done(in.RunID)
+			return nil, fmt.Errorf("worker_exit")
+	    }
+		if out.T == "message.delta" {
+			if emit != nil{
+				if err := emit(out); err != nil{
+					return nil,err
+				}
+			}
+			continue
+		}
+		return &out, nil
 	}
-	var out Out
-	if err := json.Unmarshal(ch.out.Bytes(), &out); err != nil {
-		p.Done(in.RunID)
-		return nil, fmt.Errorf("worker_exit")
-	}
-	return &out, nil
 }
 
 func (p *Process) Done(runID string) {

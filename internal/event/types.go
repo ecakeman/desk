@@ -10,4 +10,5 @@ const (
 	TypeRunCompleted      = "run.completed"
 	TypeEpisodeCompacted  = "episode.compacted"
 	TypeMessageCompleted  = "message.completed"
+	TypeMessageDelta      = "message.delta"
 )

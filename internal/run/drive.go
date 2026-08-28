@@ -30,7 +30,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 		tools = append(tools, t)
 	}
 
-	out, err := s.Worker.Handle(worker.In{
+	out, err := s.ask(ctx, runID, worker.In{
 		T:        "turn.start",
 		RunID:    runID,
 		Messages: msgs,
@@ -48,7 +48,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 				return err
 			}
 			id := out.ID
-			out, err = s.Worker.Handle(worker.In{
+			out, err = s.ask(ctx, runID, worker.In{
 				T:     "tool.result",
 				RunID: runID,
 				ID:    id,
@@ -151,4 +151,16 @@ func toolRisk(r *plugin.Registry, name string) string {
 		}
 	}
 	return "write"
+}
+
+func (s *Service) ask(ctx context.Context, runID string, in worker.In) (*worker.Out, error) {
+	in.RunID = runID
+	return s.Worker.Handle(in, func(o worker.Out) error {
+		if o.T != "message.delta" || o.Text == "" {
+			return nil
+		}
+		return s.appendOne(ctx, runID, event.TypeMessageDelta, map[string]string{
+			"text": o.Text,
+		})
+	})
 }
