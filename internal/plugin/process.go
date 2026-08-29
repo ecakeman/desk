@@ -23,8 +23,8 @@ func (p *Process) Manifest() Manifest {
 func (p *Process) Exec(ctx context.Context,op string,args map[string]any) (json.RawMessage,error){
 	ok :=false
 	for _,o := range p.man.Ops{
-		if o == op{
-			ok =true
+		if o.Name == op {
+			ok = true
 			break
 		}
 	}
@@ -47,8 +47,12 @@ func (p *Process) Exec(ctx context.Context,op string,args map[string]any) (json.
 	}
 	ctx,cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	bin := filepath.Join(p.dir,p.man.Command)
-	cmd := exec.CommandContext(ctx,bin)
+	bin := filepath.Join(p.dir, p.man.Command)
+	abs, err := filepath.Abs(bin)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, abs)
 	cmd.Dir = p.work
 	cmd.Stdin = bytes.NewReader(append(raw,'\n'))
 	out,err := cmd.Output()

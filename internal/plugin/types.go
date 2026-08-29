@@ -5,10 +5,16 @@ import (
 	"encoding/json"
 )
 
+type OpSpec struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
 type Manifest struct {
 	Name    string   `json:"name"`
 	Command string   `json:"command"`
-	Ops     []string `json:"ops"`
+	Ops     []OpSpec `json:"ops"`
 	Risk    string   `json:"risk"`
 }
 
@@ -21,6 +27,7 @@ type Tool struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Risk        string `json:"risk"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
 type request struct {

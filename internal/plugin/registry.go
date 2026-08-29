@@ -46,14 +46,15 @@ func (r *Registry)Tools() []Tool{
 		m := p.Manifest()
 		for _,op := range m.Ops{
 			risk := m.Risk
-			if op == "write" {
-				risk = "write"
-			}
 			out = append(out, Tool{
-				Name:        m.Name + "." + op,
-				Description: "plugin " + m.Name + " op " + op,
+				Name:        m.Name + "." + op.Name,
+				Description: op.Description,
 				Risk:        risk,
+				Parameters:  op.Parameters,
 			})
+			if op.Name == "write" {
+				out[len(out)-1].Risk = "write"
+			}
 		}
 	}
 	return out

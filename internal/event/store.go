@@ -15,8 +15,9 @@ func NewStore(db *sql.DB)*Store{
 }
 
 type Event struct{
-	Seq int `json:"seq"`
-	Type string `json:"type"`
+	RunID   string          `json:"run_id,omitempty"`
+	Seq     int             `json:"seq"`
+	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
 
@@ -66,4 +67,26 @@ func (s *Store) ListAfter(ctx context.Context,runID string,after int)([]Event,er
 		out=append(out,e)
 	}
 	return out,rows.Err()
+}
+
+func (s *Store) ListBySession(ctx context.Context, sessionID string) ([]Event, error) {
+	rows, err := s.DB.QueryContext(ctx, `
+		SELECT e.run_id, e.seq, e.type, e.payload
+		FROM events e
+		JOIN runs r ON r.id = e.run_id
+		WHERE r.session_id = $1
+		ORDER BY r.created_at, e.seq`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Event
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(&e.RunID, &e.Seq, &e.Type, &e.Payload); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

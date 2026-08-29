@@ -1,6 +1,37 @@
 {
     "name": "fs",
     "command": "fs",
-    "ops": ["read","write","sleep"],
-    "risk": "read"
-}
+    "risk": "read",
+    "ops": [
+      {
+        "name": "read",
+        "description": "Read a UTF-8 file in the workspace.",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": {"type": "string", "description": "Relative path"}
+          }
+        }
+      },
+      {
+        "name": "write",
+        "description": "Write a file in the workspace.",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "content"],
+          "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"}
+          }
+        }
+      },
+      {
+        "name": "sleep",
+        "description": "Sleep 10s (cancel test).",
+        "parameters": {"type": "object", "properties": {}}
+      }
+    ]
+  }

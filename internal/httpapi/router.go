@@ -60,6 +60,25 @@ func NewMux(d Deps) *gin.Engine {
 			}
 			c.JSON(http.StatusOK, s)
 		})
+		v1.GET("/sessions/:id/events", func(c *gin.Context) {
+			if _, err := d.Sessions.Get(c.Request.Context(), c.Param("id")); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			evs, err := d.Events.ListBySession(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			if evs == nil {
+				evs = []event.Event{}
+			}
+			c.JSON(http.StatusOK, evs)
+		})
 		v1.POST("/sessions/:id/messages", func(c *gin.Context) {
 			var body struct {
 				Text string `json:"text"`

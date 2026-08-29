@@ -1,6 +1,20 @@
 {
     "name": "search",
     "command": "search",
-    "ops": ["grep"],
-    "risk": "read"
-}
+    "risk": "read",
+    "ops": [
+      {
+        "name": "grep",
+        "description": "Search workspace files for a substring.",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["query"],
+          "properties": {
+            "query": {"type": "string"},
+            "glob": {"type": "string"}
+          }
+        }
+      }
+    ]
+  }

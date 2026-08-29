@@ -14,6 +14,7 @@ import(
 	"desk/internal/run"
 	"desk/internal/plugin"
 	"desk/internal/worker"
+	"desk/internal/cli"
 )
 
 func main(){
@@ -27,9 +28,22 @@ func main(){
 	case "serve":
 		if err :=runServe(cfg);err!=nil {
 			log.Fatal(err)
-			}
-	case "chat","show":
-		log.Fatal("no")
+		}
+	case "chat":
+		sid := ""
+		if len(os.Args) > 2 {
+			sid = os.Args[2]
+		}
+		if err := cli.Chat(cli.New(cfg.HTTPAddr), sid); err != nil {
+			log.Fatal(err)
+		}
+	case "show":
+		if len(os.Args) < 3 {
+			log.Fatal("usage: desk show <session_id>")
+		}
+		if err := cli.Show(cli.New(cfg.HTTPAddr), os.Args[2]); err != nil {
+			log.Fatal(err)
+		}
 	default:
 		log.Fatalf("unknown command: %s", cmd)
 	}

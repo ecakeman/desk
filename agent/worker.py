@@ -23,15 +23,15 @@ def openai_tools(raw):
         host = t["name"]
         api = host.replace(".", "_")
         api_to_host[api] = host
+        params = t.get("parameters")
+        if not isinstance(params, dict):
+            params = {"type": "object", "properties": {}}
         out.append({
             "type": "function",
             "function": {
                 "name": api,
                 "description": t.get("description") or "",
-                "parameters": {
-                    "type": "object",
-                    "additionalProperties": True,
-                },
+                "parameters": params,
             },
         })
     return out
@@ -55,6 +55,7 @@ def chat():
         method="POST",
     )
     acc = []
+    reason = []
     tcs = {}
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -70,6 +71,8 @@ def chat():
                     break
                 obj = json.loads(data)
                 delta = (obj.get("choices") or [{}])[0].get("delta") or {}
+                if delta.get("reasoning_content"):
+                    reason.append(delta["reasoning_content"])
                 if delta.get("content"):
                     piece = delta["content"]
                     acc.append(piece)
@@ -98,14 +101,18 @@ def chat():
         if not isinstance(args, dict):
             args = {}
         api_name = slot["name"]
-        messages.append({
+        asst = {
             "role": "assistant",
             "tool_calls": [{
                 "id": slot["id"] or "1",
                 "type": "function",
                 "function": {"name": api_name, "arguments": slot["arguments"]},
             }],
-        })
+        }
+        rs = "".join(reason)
+        if rs:
+            asst["reasoning_content"] = rs
+        messages.append(asst)
         return {
             "t": "tool.request",
             "id": slot["id"] or "1",
@@ -113,7 +120,11 @@ def chat():
             "args": args,
         }
     text = "".join(acc)
-    messages.append({"role": "assistant", "content": text})
+    asst = {"role": "assistant", "content": text}
+    rs = "".join(reason)
+    if rs:
+        asst["reasoning_content"] = rs
+    messages.append(asst)
     return {"t": "turn.finish", "text": text}
 
 
