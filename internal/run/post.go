@@ -19,10 +19,16 @@ type Service struct {
 
 	mu sync.Mutex
 	pending map[string]chan bool
+	cancels map[string]context.CancelFunc
 }
 
 func NewService(db *sql.DB, events *event.Store) *Service {
-	return &Service{DB: db, Events: events, pending: map[string]chan bool{}}
+	return &Service{
+		DB: db, 
+		Events: events,
+		pending: map[string]chan bool{},
+		cancels: map[string]context.CancelFunc{},
+	}
 }
 
 func (s *Service) PostUserMessage(ctx context.Context, sessionID, text, workspace string) (string, error) {
@@ -58,8 +64,21 @@ func (s *Service) PostUserMessage(ctx context.Context, sessionID, text, workspac
 		return "", err
 	}
 	if s.Worker != nil && s.Plugins != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		s.mu.Lock()
+		s.cancels[runID] = cancel
+		s.mu.Unlock()
 		go func() {
-			if err := s.Drive(context.Background(), runID); err != nil {
+			defer func() {
+				s.mu.Lock()
+				delete(s.cancels, runID)
+				s.mu.Unlock()
+			}()
+			if err := s.Drive(ctx, runID); err != nil {
+				if ctx.Err() != nil {
+					_ = s.Interrupt(context.Background(), runID, "canceled")
+					return
+				}
 				_ = s.Fail(context.Background(), runID, err.Error())
 			}
 		}()

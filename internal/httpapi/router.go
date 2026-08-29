@@ -121,6 +121,18 @@ func NewMux(d Deps) *gin.Engine {
 			}
 			c.JSON(http.StatusOK, gin.H{"ok": true})
 		})
+		v1.POST("/runs/:id/cancel", func(c *gin.Context) {
+			err := d.Messages.Cancel(c.Param("id"))
+			if errors.Is(err, run.ErrNotWaiting) {
+				c.JSON(http.StatusConflict, gin.H{"error": "conflict"})
+				return
+			}
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+		})
 		v1.GET("/runs/:id/events", func(c* gin.Context){
 			runID:=c.Param("id")
 			if _,err:=d.Runs.Get(c.Request.Context(),runID);err != nil{

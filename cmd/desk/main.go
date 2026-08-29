@@ -58,6 +58,9 @@ func runServe(cfg config.Config) error {
 		"DESK_MODEL_API_KEY="+cfg.Model.APIKey,
 		"DESK_MODEL_MODEL="+cfg.Model.Model,
 	))
+	if err := svc.Recover(ctx); err != nil {
+		return err
+	}
 	mux := httpapi.NewMux(httpapi.Deps{
 		DB:        sqlDB,
 		Workspace: cfg.Workerspace,

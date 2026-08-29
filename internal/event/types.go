@@ -12,4 +12,5 @@ const (
 	TypeMessageCompleted  = "message.completed"
 	TypeMessageDelta      = "message.delta"
 	TypeToolDenied        = "tool.denied"
+	TypeRunInterrupted    = "run.interrupted"
 )
