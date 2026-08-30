@@ -11,6 +11,11 @@ type In struct {
 	OK       bool             `json:"ok,omitempty"`
 	Data     json.RawMessage  `json:"data,omitempty"`
 	Error    string           `json:"error,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Phase    string `json:"phase,omitempty"`
+	APIModel string `json:"api_model,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
 }
 
 type Out struct {

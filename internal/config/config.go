@@ -9,14 +9,16 @@ type ModelConfig struct{
 }
 
 type Config struct{
-	HTTPAddr string
-	Workerspace string
-	DatabaseURL string
+	HTTPAddr      string
+	Workerspace   string
+	DatabaseURL   string
 	MigrationsDir string
-	PluginsDir string
-	Python string
-    Agent  string
-	Model ModelConfig
+	PluginsDir    string
+	Python        string
+    Agent         string
+	Model         ModelConfig
+	Flash         ModelConfig
+	Pro           ModelConfig
 	
 }
 
@@ -34,6 +36,24 @@ func Load() Config{
 			APIKey: getenv("DESK_MODEL_API_KEY", ""),
 			Model: getenv("DESK_MODEL_MODEL", ""),
 		},
+		Flash: modelSlot("DESK_FLASH", ModelConfig{
+			BaseURL: getenv("DESK_MODEL_BASE_URL", ""),
+			APIKey:  getenv("DESK_MODEL_API_KEY", ""),
+			Model:   getenv("DESK_MODEL_MODEL", ""),
+		}),
+		Pro: modelSlot("DESK_PRO", ModelConfig{
+			BaseURL: getenv("DESK_MODEL_BASE_URL", ""),
+			APIKey:  getenv("DESK_MODEL_API_KEY", ""),
+			Model:   getenv("DESK_MODEL_MODEL", ""),
+		}),
+	}
+}
+
+func modelSlot(prefix string, fallback ModelConfig) ModelConfig {
+	return ModelConfig{
+		BaseURL: getenv(prefix+"_BASE_URL", fallback.BaseURL),
+		APIKey:  getenv(prefix+"_API_KEY", fallback.APIKey),
+		Model:   getenv(prefix+"_MODEL", fallback.Model),
 	}
 }
 

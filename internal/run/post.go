@@ -9,6 +9,7 @@ import (
 	"desk/internal/ids"
 	"desk/internal/plugin"
 	"desk/internal/worker"
+	"desk/internal/config"
 )
 
 type Service struct {
@@ -16,6 +17,8 @@ type Service struct {
 	Events *event.Store
 	Plugins *plugin.Registry
 	Worker worker.Worker
+	Flash config.ModelConfig
+	Pro   config.ModelConfig
 
 	mu sync.Mutex
 	pending map[string]chan bool

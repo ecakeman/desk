@@ -13,6 +13,16 @@ tools = []
 api_to_host = {}
 
 
+def apply_host_model(msg):
+    global BASE, KEY, MODEL
+    if msg.get("base_url"):
+        BASE = str(msg["base_url"]).rstrip("/")
+    if "api_key" in msg and msg["api_key"] is not None:
+        KEY = msg["api_key"]
+    if msg.get("api_model"):
+        MODEL = msg["api_model"]
+
+
 def openai_tools(raw):
     global api_to_host
     out = []
@@ -133,6 +143,7 @@ for line in sys.stdin:
     if not line:
         continue
     msg = json.loads(line)
+    apply_host_model(msg)
     t = msg.get("t")
     if t == "turn.start":
         messages = [

@@ -34,12 +34,15 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 	for _, t := range s.Plugins.Tools() {
 		tools = append(tools, t)
 	}
+	nFlash := 0
+	phase := "plan"
 
 	out, err := s.ask(ctx, runID, worker.In{
 		T:        "turn.start",
 		RunID:    runID,
 		Messages: msgs,
 		Tools:    tools,
+		Phase:    phase,
 	})
 	if err != nil {
 		return err
@@ -51,7 +54,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 			data, err := s.runTool(ctx, runID, out)
 			id := out.ID
 			if errors.Is(err, errDenied) {
-				out, err = s.ask(ctx, runID, worker.In{T: "tool.denied", ID: id})
+				out, err = s.ask(ctx, runID, worker.In{T: "tool.denied", ID: id, Phase: phase})
 				if err != nil {
 					return err
 				}
@@ -60,12 +63,19 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 			if err != nil {
 				return err
 			}
+			nFlash++
+			if nFlash%5 == 0 {
+				phase = "review"
+			} else {
+				phase = "act"
+			}
 			out, err = s.ask(ctx, runID, worker.In{
 				T:     "tool.result",
 				RunID: runID,
 				ID:    id,
 				OK:    true,
 				Data:  data,
+				Phase: phase,
 			})
 			if err != nil {
 				return err
@@ -181,8 +191,24 @@ func toolRisk(r *plugin.Registry, name string) string {
 	return "write"
 }
 
+func (s *Service) applySlot(in *worker.In) {
+	cfg := s.Flash
+	in.Model = "flash"
+	if in.Phase == "plan" || in.Phase == "review" {
+		cfg = s.Pro
+		in.Model = "pro"
+	}
+	if in.Phase == "" {
+		in.Phase = "act"
+	}
+	in.APIModel = cfg.Model
+	in.BaseURL = cfg.BaseURL
+	in.APIKey = cfg.APIKey
+}
+
 func (s *Service) ask(ctx context.Context, runID string, in worker.In) (*worker.Out, error) {
 	in.RunID = runID
+	s.applySlot(&in)
 	return s.Worker.Handle(in, func(o worker.Out) error {
 		if o.T != "message.delta" || o.Text == "" {
 			return nil
