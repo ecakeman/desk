@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 )
 
-type Store struct{
-	DB *sql.DB
+type Store struct {
+	DB       *sql.DB
+	OnInsert func(ctx context.Context, runID string, seq int, typ string, payload json.RawMessage) error
 }
 
 func NewStore(db *sql.DB)*Store{
@@ -37,7 +38,13 @@ func (s *Store) Append(ctx context.Context,tx *sql.Tx,runID,typ string,payload a
 		`INSERT INTO events (run_id,seq,type,payload) VALUES ($1,$2,$3,$4)`,
 		runID,seq,typ,raw,
 	)
-	return seq,err
+	if err != nil {
+		return seq, err
+	}
+	if s.OnInsert != nil {
+		_ = s.OnInsert(ctx, runID, seq, typ, raw)
+	}
+	return seq,nil
 }
 
 func (s *Store) Get(ctx context.Context, runID string, seq int) (Event, error) {

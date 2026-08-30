@@ -40,6 +40,10 @@ func Load(pluginDir, workspace string)(*Registry,error){
 	return r,nil
 }
 
+func (r *Registry) Put(p Plugin) {
+	r.byName[p.Manifest().Name] = p
+}
+
 func (r *Registry)Tools() []Tool{
 	var out []Tool
 	for _,p :=range r.byName{

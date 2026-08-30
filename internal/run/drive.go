@@ -23,7 +23,9 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 		return err
 	}
 	defer s.Worker.Done(runID)
-
+	if err := s.Events.EnsureCompact(ctx, sessionID, runID); err != nil {
+		return err
+	}
 	msgs, err := s.Events.Messages(ctx, sessionID, runID)
 	if err != nil {
 		return err

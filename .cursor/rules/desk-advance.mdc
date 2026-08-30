@@ -9,7 +9,7 @@ alwaysApply: true
 
 课表不定 21 天。**一块课 = 一次 Run 上还没接通的边**，一次写到单环要用的深度。不要按插件清单横切，不要先 stub 再撕。
 
-**每期推进开头必须标：** `单环 x/8 · 成品 y/5 · 观察 z/2`（分母见 `document/runlog/plan.md`）。观察格在单环 8/8 之后才动。观察 A/B 的 React+TS dashboard **助手代写、用户 review**；不要改成让用户手写前端。
+**每期推进开头必须标：** `单环 x/8 · 成品 y/6 · 观察 z/2`（分母见 `document/runlog/plan.md`）。观察格在单环 8/8 之后才动。观察 A/B 的 React+TS dashboard **助手代写、用户 review**；不要改成让用户手写前端。
 
 ## 每次推进（含「推进」、补课）必须按这个顺序，缺一块就停
 

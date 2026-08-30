@@ -1,20 +1,21 @@
 package main
 
-import(
+import (
 	"context"
 	"log"
 	"net/http"
 	"os"
 
-	"desk/internal/httpapi"
-	"desk/internal/db"
-	"desk/internal/config"
-	"desk/internal/event"
-	"desk/internal/session"
-	"desk/internal/run"
-	"desk/internal/plugin"
-	"desk/internal/worker"
 	"desk/internal/cli"
+	"desk/internal/config"
+	"desk/internal/db"
+	"desk/internal/event"
+	"desk/internal/httpapi"
+	"desk/internal/memory"
+	"desk/internal/plugin"
+	"desk/internal/run"
+	"desk/internal/session"
+	"desk/internal/worker"
 )
 
 func main(){
@@ -61,12 +62,18 @@ func runServe(cfg config.Config) error {
 	}
 
 	ev := event.NewStore(sqlDB)
- 	reg, err := plugin.Load(cfg.PluginsDir, cfg.Workerspace)
- 	if err != nil {
+	idx := memory.New(sqlDB)
+	ev.OnInsert = idx.Index
+	if err := idx.Rebuild(ctx); err != nil {
 		return err
 	}
- 	svc := run.NewService(sqlDB, ev)
- 	svc.Plugins = reg
+	reg, err := plugin.Load(cfg.PluginsDir, cfg.Workerspace)
+	if err != nil {
+		return err
+	}
+	reg.Put(memory.NewHost(idx))
+	svc := run.NewService(sqlDB, ev)
+	svc.Plugins = reg
 	svc.Worker = worker.NewProcess(cfg.Python, cfg.Agent, append(os.Environ(),
 		"DESK_MODEL_BASE_URL="+cfg.Model.BaseURL,
 		"DESK_MODEL_API_KEY="+cfg.Model.APIKey,
@@ -75,6 +82,7 @@ func runServe(cfg config.Config) error {
 	if err := svc.Recover(ctx); err != nil {
 		return err
 	}
+
 	mux := httpapi.NewMux(httpapi.Deps{
 		DB:        sqlDB,
 		Workspace: cfg.Workerspace,
