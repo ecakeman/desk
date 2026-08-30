@@ -12,5 +12,7 @@ const (
 	TypeMessageCompleted  = "message.completed"
 	TypeMessageDelta      = "message.delta"
 	TypeToolDenied        = "tool.denied"
+	TypeToolFailed        = "tool.failed"
 	TypeRunInterrupted    = "run.interrupted"
+	TypeTaskUpdated       = "task.updated"
 )

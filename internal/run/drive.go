@@ -15,6 +15,10 @@ import (
 
 var errDenied = errors.New("tool_denied")
 
+type toolFailedError struct{ msg string }
+
+func (e toolFailedError) Error() string { return e.msg }
+
 func (s *Service) Drive(ctx context.Context, runID string) error {
 	var sessionID string
 	if err := s.DB.QueryRowContext(ctx,
@@ -35,7 +39,9 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 		tools = append(tools, t)
 	}
 	nFlash := 0
+	nFail := 0
 	phase := "plan"
+	slot := "pro"
 
 	out, err := s.ask(ctx, runID, worker.In{
 		T:        "turn.start",
@@ -47,6 +53,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
+	slot = slotOf(phase)
 
 	for i := 0; i < 64; i++ {
 		switch out.T {
@@ -58,11 +65,35 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 				if err != nil {
 					return err
 				}
+				slot = slotOf(phase)
+				continue
+			}
+			var tf toolFailedError
+			if errors.As(err, &tf) {
+				nFail++
+				if nFail >= 2 {
+					phase = "review"
+				} else {
+					phase = "act"
+				}
+				out, err = s.ask(ctx, runID, worker.In{
+					T:     "tool.result",
+					RunID: runID,
+					ID:    id,
+					OK:    false,
+					Error: tf.msg,
+					Phase: phase,
+				})
+				if err != nil {
+					return err
+				}
+				slot = slotOf(phase)
 				continue
 			}
 			if err != nil {
 				return err
 			}
+			nFail = 0
 			nFlash++
 			if nFlash%5 == 0 {
 				phase = "review"
@@ -80,8 +111,9 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 			if err != nil {
 				return err
 			}
+			slot = slotOf(phase)
 		case "turn.finish":
-			return s.finish(ctx,runID,out.Text)
+			return s.finish(ctx, runID, out.Text, slot)
 		case "turn.fail":
 			return fmt.Errorf("%s", out.Error)
 		default:
@@ -124,9 +156,14 @@ func (s *Service) runTool(ctx context.Context, runID string, req *worker.Out) (j
 	}); err != nil {
 		return nil, err
 	}
-	data, err := s.Plugins.Exec(ctx, plug, op, req.Args)
+	data, err := s.Plugins.Exec(plugin.WithRunID(ctx, runID), plug, op, req.Args)
 	if err != nil {
-		return nil, err
+		if _, aerr := s.appendOne(ctx, runID, event.TypeToolFailed, map[string]any{
+			"id": req.ID, "name": req.Name, "error": err.Error(),
+		}); aerr != nil {
+			return nil, aerr
+		}
+		return nil, toolFailedError{msg: err.Error()}
 	}
 	payload := struct {
 		ID   string          `json:"id"`
@@ -139,15 +176,16 @@ func (s *Service) runTool(ctx context.Context, runID string, req *worker.Out) (j
 	return data, nil
 }
 
-func (s *Service) finish(ctx context.Context, runID, text string) error {
+func (s *Service) finish(ctx context.Context, runID, text, model string) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	if text != "" {
-		if _,err := s.Events.Append(ctx, tx, runID, event.TypeMessageCompleted, map[string]string{
-			"text": text,
+		if _, err := s.Events.Append(ctx, tx, runID, event.TypeMessageCompleted, map[string]string{
+			"text":  text,
+			"model": model,
 		}); err != nil {
 			return err
 		}
@@ -191,6 +229,13 @@ func toolRisk(r *plugin.Registry, name string) string {
 	return "write"
 }
 
+func slotOf(phase string) string {
+	if phase == "plan" || phase == "review" {
+		return "pro"
+	}
+	return "flash"
+}
+
 func (s *Service) applySlot(in *worker.In) {
 	cfg := s.Flash
 	in.Model = "flash"
@@ -213,7 +258,10 @@ func (s *Service) ask(ctx context.Context, runID string, in worker.In) (*worker.
 		if o.T != "message.delta" || o.Text == "" {
 			return nil
 		}
-		_, err := s.appendOne(ctx, runID, event.TypeMessageDelta, map[string]string{"text": o.Text})
+		_, err := s.appendOne(ctx, runID, event.TypeMessageDelta, map[string]string{
+			"text":  o.Text,
+			"model": in.Model,
+		})
 		return err
 	})
 }

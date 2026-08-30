@@ -77,6 +77,20 @@ func (s *Store) Messages(ctx context.Context, sessionID, currentRunID string) ([
 				return nil, err
 			}
 			out = append(out, map[string]any{"role": "assistant", "content": Redact(p.Text)})
+		case TypeTaskUpdated:
+			var p struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+				Title  string `json:"title"`
+			}
+			if err := json.Unmarshal(e.Raw, &p); err != nil {
+				return nil, err
+			}
+			line := "task " + p.Status + " " + p.Title
+			if p.ID != "" {
+				line = "task " + p.ID + " " + p.Status + " " + p.Title
+			}
+			out = append(out, map[string]any{"role": "user", "content": Redact(line)})
 		}
 	}
 	return out, nil

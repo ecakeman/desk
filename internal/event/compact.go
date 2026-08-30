@@ -88,6 +88,8 @@ func stmChars(rows []sessRow, skip map[string]map[int]bool) int {
 		switch e.Type {
 		case TypeMessageUser, TypeMessageCompleted:
 			n += utf8.RuneCount(e.Raw)
+		case TypeTaskUpdated:
+			n += utf8.RuneCount(e.Raw)
 		case TypeToolCompleted:
 			if skip[e.RunID][e.Seq] {
 				continue

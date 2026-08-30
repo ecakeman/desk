@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 type ModelConfig struct{
 	BaseURL string
@@ -23,7 +26,8 @@ type Config struct{
 }
 
 func Load() Config{
-	return Config{
+	loadDotEnv(".env")
+	c := Config{
 		HTTPAddr: getenv("DESK_HTTP_ADDR", ":8080"),
 		Workerspace: getenv("DESK_WORKERSAPCE", "."),
 		DatabaseURL: getenv("DESK_DATABASE_URL", "postgres://desk:desk@localhost:5432/desk?sslmode=disable"),
@@ -47,6 +51,7 @@ func Load() Config{
 			Model:   getenv("DESK_MODEL_MODEL", ""),
 		}),
 	}
+	return c
 }
 
 func modelSlot(prefix string, fallback ModelConfig) ModelConfig {
@@ -62,4 +67,34 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func loadDotEnv(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		k = strings.TrimPrefix(k, "export ")
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if n := len(v); n >= 2 {
+			if q := v[0]; (q == '"' || q == '\'') && v[n-1] == q {
+				v = v[1 : n-1]
+			}
+		}
+		if v == "" {
+			continue
+		}
+		_ = os.Setenv(k, v)
+	}
 }

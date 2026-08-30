@@ -8,7 +8,7 @@ type In struct {
 	Messages []map[string]any `json:"messages,omitempty"`
 	Tools    []any            `json:"tools,omitempty"`
 	ID       string           `json:"id,omitempty"`
-	OK       bool             `json:"ok,omitempty"`
+	OK       bool             `json:"ok"`
 	Data     json.RawMessage  `json:"data,omitempty"`
 	Error    string           `json:"error,omitempty"`
 	Model    string `json:"model,omitempty"`

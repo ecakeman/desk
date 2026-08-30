@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"unicode/utf8"
 
 	"desk/internal/event"
@@ -100,6 +101,17 @@ func extract(typ string, raw json.RawMessage) (string, bool) {
 			return "", false
 		}
 		return p.Text, true
+	case event.TypeTaskUpdated:
+		var p struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Title  string `json:"title"`
+		}
+		if json.Unmarshal(raw, &p) != nil {
+			return "", false
+		}
+		s := strings.TrimSpace(p.Title + " " + p.Status)
+		return s, s != ""
 	case event.TypeToolCompleted:
 		var p struct {
 			Data json.RawMessage `json:"data"`

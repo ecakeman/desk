@@ -15,6 +15,7 @@ import (
 	"desk/internal/plugin"
 	"desk/internal/run"
 	"desk/internal/session"
+	"desk/internal/task"
 	"desk/internal/worker"
 )
 
@@ -72,6 +73,7 @@ func runServe(cfg config.Config) error {
 		return err
 	}
 	reg.Put(memory.NewHost(idx))
+	reg.Put(task.NewHost(sqlDB, ev))
 	svc := run.NewService(sqlDB, ev)
 	svc.Plugins = reg
 	svc.Flash = cfg.Flash

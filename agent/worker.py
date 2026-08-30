@@ -156,10 +156,15 @@ for line in sys.stdin:
         tools = openai_tools(msg.get("tools"))
         out = chat()
     elif t == "tool.result":
+        if msg.get("ok"):
+            data = msg.get("data")
+            content = data if isinstance(data, str) else json.dumps(data)
+        else:
+            content = msg.get("error") or "error"
         messages.append({
             "role": "tool",
             "tool_call_id": msg.get("id"),
-            "content": msg.get("data") if isinstance(msg.get("data"), str) else json.dumps(msg.get("data")),
+            "content": content,
         })
         out = chat()
     elif t == "tool.denied":
