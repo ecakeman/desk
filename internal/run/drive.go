@@ -10,6 +10,7 @@ import (
 	"desk/internal/approve"
 	"desk/internal/event"
 	"desk/internal/plugin"
+	"desk/internal/skill"
 	"desk/internal/worker"
 )
 
@@ -20,10 +21,10 @@ type toolFailedError struct{ msg string }
 func (e toolFailedError) Error() string { return e.msg }
 
 func (s *Service) Drive(ctx context.Context, runID string) error {
-	var sessionID string
+	var sessionID, workspace string
 	if err := s.DB.QueryRowContext(ctx,
-		`SELECT session_id FROM runs WHERE id=$1`, runID,
-	).Scan(&sessionID); err != nil {
+		`SELECT session_id, workspace_dir FROM runs WHERE id=$1`, runID,
+	).Scan(&sessionID, &workspace); err != nil {
 		return err
 	}
 	defer s.Worker.Done(runID)
@@ -34,6 +35,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
+	msgs = append(msgs, skill.Inject(workspace)...)
 	var tools []any
 	for _, t := range s.Plugins.Tools() {
 		tools = append(tools, t)
@@ -170,8 +172,22 @@ func (s *Service) runTool(ctx context.Context, runID string, req *worker.Out) (j
 		Name string          `json:"name"`
 		Data json.RawMessage `json:"data"`
 	}{ID: req.ID, Name: req.Name, Data: data}
-	if _, err := s.appendOne(ctx, runID, event.TypeToolCompleted, payload); err != nil {
+	doneSeq, err := s.appendOne(ctx, runID, event.TypeToolCompleted, payload)
+	if err != nil {
 		return nil, err
+	}
+	if req.Name == "fs.write" {
+		p, _ := req.Args["path"].(string)
+		if skill.IsRel(p) {
+			content, _ := req.Args["content"].(string)
+			if _, err := s.appendOne(ctx, runID, event.TypeSkillRevised, map[string]any{
+				"path":      p,
+				"based_on":  []int{doneSeq},
+				"diff_head": skill.DiffHead(content),
+			}); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return data, nil
 }

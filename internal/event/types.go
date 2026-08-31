@@ -15,4 +15,7 @@ const (
 	TypeToolFailed        = "tool.failed"
 	TypeRunInterrupted    = "run.interrupted"
 	TypeTaskUpdated       = "task.updated"
+	TypeSkillRevised      = "skill.revised"
+	TypeSkillChallenge    = "skill.challenge"
+	TypeSkillOverridden   = "skill.overridden"
 )

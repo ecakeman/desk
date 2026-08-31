@@ -7,3 +7,4 @@
 plugins/fs/fs
 plugins/search/search
 internal/plugin/smoke.go
+/memory/

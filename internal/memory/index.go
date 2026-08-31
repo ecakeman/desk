@@ -112,6 +112,15 @@ func extract(typ string, raw json.RawMessage) (string, bool) {
 		}
 		s := strings.TrimSpace(p.Title + " " + p.Status)
 		return s, s != ""
+	case event.TypeSkillRevised:
+		var p struct {
+			Path     string `json:"path"`
+			DiffHead string `json:"diff_head"`
+		}
+		if json.Unmarshal(raw, &p) != nil || p.Path == "" {
+			return "", false
+		}
+		return strings.TrimSpace(p.Path + " " + p.DiffHead), true
 	case event.TypeToolCompleted:
 		var p struct {
 			Data json.RawMessage `json:"data"`
