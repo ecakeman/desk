@@ -219,7 +219,9 @@ test('timeline approval and provenance use the HTTP contract', async ({ page }) 
 
   await page.getByRole('tab', { name: '审计' }).click()
   await expect(page.getByRole('heading', { name: 'Event Timeline' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /tool\.requested #2/ })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'tool.requested #2 fs.write' }),
+  ).toBeVisible()
 
   await page.getByRole('button', { name: 'Allow' }).first().click()
   await expect.poll(() => mock.decision()).toEqual({ seq: 2, allow: true })
