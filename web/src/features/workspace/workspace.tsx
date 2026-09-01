@@ -23,7 +23,7 @@ import { Badge } from '@/components/ui/badge'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { Bot, Menu, PanelLeftOpen, PanelRightOpen, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
 
 type MobilePane = 'navigation' | 'chat' | 'inspector'
 type CenterMode = 'chat' | 'audit'
@@ -61,6 +61,36 @@ function readPane(key: string, fallback: number) {
   return Number.isFinite(n) ? n : fallback
 }
 
+function onPaneDragStart(
+  event: MouseEvent,
+  side: 'left' | 'right',
+  setLeftWidth: (value: number | ((width: number) => number)) => void,
+  setRightWidth: (value: number | ((width: number) => number)) => void,
+) {
+  event.preventDefault()
+  const move = (next: globalThis.MouseEvent) => {
+    if (side === 'left') {
+      setLeftWidth(Math.min(520, Math.max(200, next.clientX)))
+    } else {
+      setRightWidth(Math.min(640, Math.max(240, window.innerWidth - next.clientX)))
+    }
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    setLeftWidth((width) => {
+      localStorage.setItem('desk-pane-left', String(width))
+      return width
+    })
+    setRightWidth((width) => {
+      localStorage.setItem('desk-pane-right', String(width))
+      return width
+    })
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+}
+
 export function Workspace() {
   const params = useParams({ strict: false }) as {
     sessionId?: string
@@ -86,7 +116,6 @@ export function Workspace() {
   const [rightCollapsed, setRightCollapsed] = useState(false)
   const [leftWidth, setLeftWidth] = useState(() => readPane('desk-pane-left', 288))
   const [rightWidth, setRightWidth] = useState(() => readPane('desk-pane-right', 384))
-  const drag = useRef<'left' | 'right' | undefined>(undefined)
 
   const sessionsQuery = useQuery({
     queryKey: ['sessions'],
@@ -333,33 +362,6 @@ export function Workspace() {
     />
   )
 
-  const startDrag = (side: 'left' | 'right') => (event: MouseEvent) => {
-    event.preventDefault()
-    drag.current = side
-    const move = (next: globalThis.MouseEvent) => {
-      if (drag.current === 'left') {
-        setLeftWidth(Math.min(520, Math.max(200, next.clientX)))
-      } else if (drag.current === 'right') {
-        setRightWidth(Math.min(640, Math.max(240, window.innerWidth - next.clientX)))
-      }
-    }
-    const up = () => {
-      drag.current = undefined
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
-      setLeftWidth((width) => {
-        localStorage.setItem('desk-pane-left', String(width))
-        return width
-      })
-      setRightWidth((width) => {
-        localStorage.setItem('desk-pane-right', String(width))
-        return width
-      })
-    }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
-  }
-
   return (
     <div className="flex h-svh flex-col bg-background">
       <header className="flex h-14 items-center gap-2 border-b px-3">
@@ -436,7 +438,7 @@ export function Workspace() {
               type="button"
               aria-label="调节左侧栏宽度"
               className="hidden w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary lg:block"
-              onMouseDown={startDrag('left')}
+              onMouseDown={(event) => onPaneDragStart(event, 'left', setLeftWidth, setRightWidth)}
             />
           </>
         )}
@@ -515,7 +517,7 @@ export function Workspace() {
               type="button"
               aria-label="调节右侧栏宽度"
               className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary"
-              onMouseDown={startDrag('right')}
+              onMouseDown={(event) => onPaneDragStart(event, 'right', setLeftWidth, setRightWidth)}
             />
             <aside
               className="flex h-full min-h-0 shrink-0 flex-col"

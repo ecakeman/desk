@@ -18,8 +18,6 @@ plugins/*
 !plugins/search/**
 plugins/fs/fs
 plugins/search/search
-prompts/tools/shell.*
-prompts/tools/host.*
 internal/plugin/smoke.go
 /memory/
 /document/

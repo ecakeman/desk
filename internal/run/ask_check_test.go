@@ -55,7 +55,7 @@ func askEnv(t *testing.T) (*Service, *sql.DB, string) {
 		t.Fatalf("build fs: %s %v", out, err)
 	}
 	work := t.TempDir()
-	reg, err := plugin.Load(filepath.Join(root, "plugins"), work, "")
+	reg, err := plugin.Load(filepath.Join(root, "plugins"), work)
 	if err != nil {
 		t.Fatal(err)
 	}

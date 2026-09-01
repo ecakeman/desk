@@ -17,7 +17,6 @@ type ModelConfig struct {
 type Config struct {
 	HTTPAddr        string
 	Workspace       string
-	HostRoot        string
 	DatabaseURL     string
 	MigrationsDir   string
 	PluginsDir      string
@@ -40,7 +39,6 @@ func Load() Config {
 	c := Config{
 		HTTPAddr:      getenv("DESK_HTTP_ADDR", ":8080"),
 		Workspace:     getenv("DESK_WORKSPACE", getenv("DESK_WORKERSAPCE", ".")),
-		HostRoot:      getenv("DESK_HOST_ROOT", ""),
 		DatabaseURL:   getenv("DESK_DATABASE_URL", "postgres://desk:desk@localhost:5432/desk?sslmode=disable"),
 		MigrationsDir: getenv("DESK_MIGRATION_DIR", "migrations"),
 		PluginsDir:    getenv("DESK_PLUGINS_DIR", "plugins"),

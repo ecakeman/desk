@@ -32,7 +32,6 @@ test-integration: db-up db-migrate
 plugins:
 	go build -o plugins/fs/fs ./plugins/fs
 	go build -o plugins/search/search ./plugins/search
-	go build -o plugins/shell/shell ./plugins/shell
 
 web:
 	npm --prefix web ci

@@ -93,7 +93,7 @@ func runServe(cfg config.Config) error {
 	if err := idx.Sync(ctx); err != nil {
 		return err
 	}
-	reg, err := plugin.Load(cfg.PluginsDir, cfg.Workspace, cfg.HostRoot)
+	reg, err := plugin.Load(cfg.PluginsDir, cfg.Workspace)
 	if err != nil {
 		return err
 	}

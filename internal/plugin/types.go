@@ -13,7 +13,7 @@ type OpSpec struct {
 	Internal    bool            `json:"internal,omitempty"`
 }
 
-// Manifest 描述一个插件。Root 为 workspace 或 host。
+// Manifest 描述一个插件。Root 非空且不是 workspace 则 Load 跳过。
 type Manifest struct {
 	Name    string   `json:"name"`
 	Command string   `json:"command"`

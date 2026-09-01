@@ -28,7 +28,7 @@ func loadFS(t *testing.T) *Registry {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build fs: %s %v", out, err)
 	}
-	r, err := Load(filepath.Join(root, "plugins"), root, "")
+	r, err := Load(filepath.Join(root, "plugins"), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestWriteAndGrepStayInWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(work, "in.txt"), []byte("desk inside"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	reg, err := Load(filepath.Join(root, "plugins"), work, "")
+	reg, err := Load(filepath.Join(root, "plugins"), work)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestMissingRootSkipsPlugin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(plug, "plugin.json"), man, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	reg, err := Load(dir, t.TempDir(), "")
+	reg, err := Load(dir, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,52 +155,9 @@ func TestMissingRootSkipsPlugin(t *testing.T) {
 	}
 }
 
-func TestHostRootTooBroad(t *testing.T) {
-	_, err := Load(t.TempDir(), t.TempDir(), "/")
-	if err == nil || !strings.Contains(err.Error(), "host_root_too_broad") {
-		t.Fatalf("broad root: %v", err)
-	}
-}
-
-func TestShellRunCwdAndTimeout(t *testing.T) {
-	root := repoRoot(t)
-	for _, spec := range []struct{ out, pkg string }{
-		{"plugins/shell/shell", "./plugins/shell"},
-		{"plugins/fs/fs", "./plugins/fs"},
-	} {
-		cmd := exec.Command("go", "build", "-o", filepath.Join(root, spec.out), spec.pkg)
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("build %s: %s %v", spec.pkg, out, err)
-		}
-	}
-	hostRoot := t.TempDir()
-	work := t.TempDir()
-	if err := os.WriteFile(filepath.Join(work, "secret.txt"), []byte("ws-only"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	reg, err := Load(filepath.Join(root, "plugins"), work, hostRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	raw, err := reg.Exec(ctx, "shell", "run", map[string]any{"command": "pwd"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), hostRoot) {
-		t.Fatalf("cwd=%s want %s", raw, hostRoot)
-	}
-	_, err = reg.Exec(ctx, "fs", "read", map[string]any{"path": "secret.txt"})
-	if err != nil {
-		t.Fatalf("fs still uses workspace: %v", err)
-	}
-	start := time.Now()
-	_, err = reg.Exec(ctx, "shell", "run", map[string]any{"command": "sleep 10"})
-	if err == nil || !strings.Contains(err.Error(), "timeout") {
-		t.Fatalf("sleep: %v", err)
-	}
-	if time.Since(start) > 7*time.Second {
-		t.Fatalf("elapsed=%s", time.Since(start))
+func TestWorkspaceTooBroad(t *testing.T) {
+	_, err := Load(t.TempDir(), "/")
+	if err == nil || !strings.Contains(err.Error(), "workspace_too_broad") {
+		t.Fatalf("broad workspace: %v", err)
 	}
 }
