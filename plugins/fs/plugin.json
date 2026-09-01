@@ -31,6 +31,7 @@
       {
         "name": "sleep",
         "description": "Sleep 10s (cancel test).",
+        "internal": true,
         "parameters": {"type": "object", "properties": {}}
       }
     ]

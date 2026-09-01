@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 type sessRow struct {
@@ -34,13 +35,13 @@ func (s *Store) sessionRows(ctx context.Context, sessionID string) ([]sessRow, e
 	return out, rows.Err()
 }
 
+// Messages 从本 Session 事件投影 STM；当前 Run 的 tool 消息由 Python 进程自己持有。
 func (s *Store) Messages(ctx context.Context, sessionID, currentRunID string) ([]map[string]any, error) {
 	rows, err := s.sessionRows(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	skip := compactedSkip(rows)
-	_ = currentRunID
 	var out []map[string]any
 	for _, e := range rows {
 		switch e.Type {
@@ -53,6 +54,11 @@ func (s *Store) Messages(ctx context.Context, sessionID, currentRunID string) ([
 			}
 			out = append(out, map[string]any{"role": "user", "content": Redact(p.Text)})
 		case TypeToolCompleted:
+			// 当前 Run 的完整 tool_call/tool 消息由 Python 进程维护；
+			// 历史 Run 不能用缺少 tool_call_id 的 role=tool，改成带回源的上下文块。
+			if e.RunID == currentRunID {
+				continue
+			}
 			if skip[e.RunID][e.Seq] {
 				continue
 			}
@@ -62,13 +68,23 @@ func (s *Store) Messages(ctx context.Context, sessionID, currentRunID string) ([
 			if err := json.Unmarshal(e.Raw, &p); err != nil {
 				return nil, err
 			}
-			out = append(out, map[string]any{"role": "tool", "content": Redact(string(p.Data))})
+			out = append(out, map[string]any{
+				"role": "user",
+				"content": Redact(
+					fmt.Sprintf("[event tool.completed %s:%d]\n%s", e.RunID, e.Seq, string(p.Data)),
+				),
+			})
 		case TypeEpisodeCompacted:
 			var p compactPayload
 			if err := json.Unmarshal(e.Raw, &p); err != nil {
 				return nil, err
 			}
-			out = append(out, map[string]any{"role": "tool", "content": Redact(p.Text)})
+			out = append(out, map[string]any{
+				"role": "user",
+				"content": Redact(
+					fmt.Sprintf("[event episode.compacted %s:%d]\n%s", e.RunID, e.Seq, p.Text),
+				),
+			})
 		case TypeMessageCompleted:
 			var p struct {
 				Text string `json:"text"`

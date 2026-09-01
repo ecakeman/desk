@@ -4,19 +4,29 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync/atomic"
 
 	"desk/internal/event"
 )
 
 var (
+	// ErrNotWaiting 表示 Run 不在 waiting_approval，或 seq 不是当前 pending。
 	ErrNotWaiting = errors.New("not_waiting")
-	ErrBadSeq     = errors.New("bad_seq")
+	// ErrBadSeq 表示 seq 对不上 tool.requested。
+	ErrBadSeq = errors.New("bad_seq")
 )
 
-func (s *Service) waitDecision(ctx context.Context, runID string) (bool, error) {
+type pendingApproval struct {
+	seq   int
+	ch    chan bool
+	taken atomic.Bool
+}
+
+// waitDecision 把 Run 切到 waiting_approval，只接受这一次 seq 的 Decide。
+func (s *Service) waitDecision(ctx context.Context, runID string, seq int) (bool, error) {
 	ch := make(chan bool, 1)
 	s.mu.Lock()
-	s.pending[runID] = ch
+	s.pending[runID] = &pendingApproval{seq: seq, ch: ch}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -55,6 +65,7 @@ func (s *Service) waitDecision(ctx context.Context, runID string) (bool, error) 
 	}
 }
 
+// Decide 消费当前 pending 的那一次批准；seq 必须等于内存里的 pending。
 func (s *Service) Decide(ctx context.Context, runID string, seq int, allow bool) error {
 	var status string
 	err := s.DB.QueryRowContext(ctx, `SELECT status FROM runs WHERE id=$1`, runID).Scan(&status)
@@ -75,15 +86,14 @@ func (s *Service) Decide(ctx context.Context, runID string, seq int, allow bool)
 		return ErrBadSeq
 	}
 	s.mu.Lock()
-	ch, ok := s.pending[runID]
+	pending, ok := s.pending[runID]
 	s.mu.Unlock()
-	if !ok {
+	if !ok || pending.seq != seq {
 		return ErrNotWaiting
 	}
-	select {
-	case ch <- allow:
-		return nil
-	default:
+	if !pending.taken.CompareAndSwap(false, true) {
 		return ErrConflict
 	}
+	pending.ch <- allow
+	return nil
 }

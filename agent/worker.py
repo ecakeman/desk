@@ -1,3 +1,5 @@
+"""Desk 模型 Worker：每 Run 一个进程，stdin/stdout JSON line。不碰 DB 和 Workspace。"""
+
 import json
 import os
 import sys
@@ -14,6 +16,7 @@ api_to_host = {}
 
 
 def apply_host_model(msg):
+    """按本回合宿主指定的槽位改 API 地址。"""
     global BASE, KEY, MODEL
     if msg.get("base_url"):
         BASE = str(msg["base_url"]).rstrip("/")
@@ -21,6 +24,18 @@ def apply_host_model(msg):
         KEY = msg["api_key"]
     if msg.get("api_model"):
         MODEL = msg["api_model"]
+
+
+def apply_host_system(msg):
+    """替换 messages[0] 的 system；每次 ask 都会换。"""
+    system = msg.get("system")
+    if not isinstance(system, str) or not system:
+        return
+    item = {"role": "system", "content": system}
+    if messages and messages[0].get("role") == "system":
+        messages[0] = item
+    else:
+        messages.insert(0, item)
 
 
 def openai_tools(raw):
@@ -48,6 +63,7 @@ def openai_tools(raw):
 
 
 def chat():
+    """对流式 chat/completions：内容分片回 message.delta，工具调用拼成 tool.request。"""
     body = {
         "model": MODEL,
         "stream": True,
@@ -146,13 +162,9 @@ for line in sys.stdin:
     apply_host_model(msg)
     t = msg.get("t")
     if t == "turn.start":
-        messages = [
-            {
-                "role": "system",
-                "content": "只能通过工具查看 Workspace。不要编造文件内容。",
-            }
-        ]
+        messages = []
         messages.extend(msg.get("messages") or [])
+        apply_host_system(msg)
         tools = openai_tools(msg.get("tools"))
         out = chat()
     elif t == "tool.result":
@@ -166,6 +178,8 @@ for line in sys.stdin:
             "tool_call_id": msg.get("id"),
             "content": content,
         })
+        messages.extend(msg.get("messages") or [])
+        apply_host_system(msg)
         out = chat()
     elif t == "tool.denied":
         messages.append({
@@ -173,6 +187,8 @@ for line in sys.stdin:
             "tool_call_id": msg.get("id"),
             "content": "denied",
         })
+        messages.extend(msg.get("messages") or [])
+        apply_host_system(msg)
         out = chat()
     else:
         out = {"t": "turn.fail", "error": "unknown t: " + str(t)}

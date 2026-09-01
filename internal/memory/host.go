@@ -1,17 +1,19 @@
 package memory
 
 import (
-	"fmt"
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"desk/internal/plugin"
 )
 
+// Host 是进程内插件 memory.search，走 Index.Search。
 type Host struct {
 	idx *Index
 }
 
+// NewHost 包装 Index。
 func NewHost(idx *Index) *Host {
 	return &Host{idx: idx}
 }

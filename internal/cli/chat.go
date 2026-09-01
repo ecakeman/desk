@@ -11,6 +11,7 @@ import (
 	"desk/internal/event"
 )
 
+// Chat 交互式发消息、打 delta、在 Ask 时读 y/n。
 func Chat(c *Client, sessionID string) error {
 	var err error
 	if sessionID == "" {

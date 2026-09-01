@@ -1,3 +1,4 @@
+// Package task 是进程内插件 task.update：只追加 task.updated，不建 task 表。
 package task
 
 import (
@@ -10,13 +11,16 @@ import (
 	"desk/internal/event"
 	"desk/internal/ids"
 	"desk/internal/plugin"
+	"desk/internal/skill"
 )
 
+// Host 实现 plugin.Plugin。
 type Host struct {
 	DB     *sql.DB
 	Events *event.Store
 }
 
+// NewHost 需要 EventStore 才能写事件。
 func NewHost(db *sql.DB, events *event.Store) *Host {
 	return &Host{DB: db, Events: events}
 }
@@ -71,9 +75,14 @@ func (h *Host) Exec(ctx context.Context, op string, args map[string]any) (json.R
 		"id":     id,
 		"status": status,
 		"title":  title,
+		"phase":  plugin.Phase(ctx),
 	}
 	if ref, _ := args["skill_ref"].(string); strings.TrimSpace(ref) != "" {
-		payload["skill_ref"] = strings.TrimSpace(ref)
+		path, version, err := skill.ParseRef(ref)
+		if err != nil {
+			return nil, err
+		}
+		payload["skill_ref"] = path + "@" + version
 	}
 	tx, err := h.DB.BeginTx(ctx, nil)
 	if err != nil {

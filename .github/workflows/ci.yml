@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go checks and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+      - name: Check formatting
+        run: make fmt-check
+      - name: Vet
+        run: make vet
+      - name: Build service and plugins
+        run: |
+          go build -o /tmp/desk ./cmd/desk
+          go build -o /tmp/desk-fs ./plugins/fs
+          go build -o /tmp/desk-search ./plugins/search
+      - name: Unit tests
+        run: go test ./cmd/... ./internal/... ./plugins/...
+
+  go-integration:
+    name: Go and Postgres integration tests
+    runs-on: ubuntu-latest
+    needs: go
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: desk
+          POSTGRES_PASSWORD: desk
+          POSTGRES_DB: desk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U desk -d desk"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DESK_DATABASE_URL: postgres://desk:desk@127.0.0.1:5432/desk?sslmode=disable
+      DESK_MIGRATION_DIR: ${{ github.workspace }}/migrations
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache: true
+      - name: Apply migrations
+        env:
+          DESK_HTTP_ADDR: 127.0.0.1:18080
+        run: |
+          go build -o /tmp/desk ./cmd/desk
+          /tmp/desk serve >/tmp/desk-migrate.log 2>&1 &
+          pid=$!
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:18080/healthz >/dev/null; then
+              kill "$pid"
+              wait "$pid" || true
+              exit 0
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              cat /tmp/desk-migrate.log
+              exit 1
+            fi
+            sleep 1
+          done
+          cat /tmp/desk-migrate.log
+          kill "$pid" 2>/dev/null || true
+          exit 1
+      - name: Integration and race tests
+        run: go test -race -p 1 -count=1 ./cmd/... ./internal/... ./plugins/...
+
+  web:
+    name: Web lint, test, and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm --prefix web ci
+      - name: Lint
+        run: npm --prefix web run lint
+      - name: Test
+        run: npm --prefix web run test
+      - name: Install Playwright browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Browser E2E
+        run: npm --prefix web run e2e
+      - name: Build
+        run: npm --prefix web run build

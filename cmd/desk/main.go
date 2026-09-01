@@ -1,3 +1,5 @@
+// Command desk 是单机 Agent 控制面入口：serve 组装依赖并监听 HTTP，
+// chat / show 只作为同一套 /v1 的客户端，不直连数据库或模型。
 package main
 
 import (
@@ -5,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"desk/internal/cli"
 	"desk/internal/config"
@@ -13,22 +16,23 @@ import (
 	"desk/internal/httpapi"
 	"desk/internal/memory"
 	"desk/internal/plugin"
+	"desk/internal/prompt"
 	"desk/internal/run"
 	"desk/internal/session"
 	"desk/internal/task"
 	"desk/internal/worker"
 )
 
-func main(){
+func main() {
 	cfg := config.Load()
 	cmd := "serve"
-	if len(os.Args) > 1{
+	if len(os.Args) > 1 {
 		cmd = os.Args[1]
 	}
 
 	switch cmd {
 	case "serve":
-		if err :=runServe(cfg);err!=nil {
+		if err := runServe(cfg); err != nil {
 			log.Fatal(err)
 		}
 	case "chat":
@@ -51,8 +55,12 @@ func main(){
 	}
 }
 
+// runServe 接通 Postgres、事件索引、插件与 Worker，再把非终态 Run 标成 interrupted。
 func runServe(cfg config.Config) error {
 	ctx := context.Background()
+	if _, err := prompt.Load(cfg.PromptsDir); err != nil {
+		return err
+	}
 	sqlDB, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -61,14 +69,31 @@ func runServe(cfg config.Config) error {
 	if err := db.Migrate(ctx, sqlDB, cfg.MigrationsDir); err != nil {
 		return err
 	}
+	if cfg.EmbedOK() {
+		if err := db.EnsureEmbeddingColumn(ctx, sqlDB, cfg.EmbedDim); err != nil {
+			return err
+		}
+	}
 
 	ev := event.NewStore(sqlDB)
 	idx := memory.New(sqlDB)
-	ev.OnInsert = idx.Index
-	if err := idx.Rebuild(ctx); err != nil {
+	idx.OnError = func(err error) {
+		log.Printf("memory index: %v", err)
+	}
+	if cfg.EmbedOK() {
+		idx.Embedder = memory.NewHTTPEmbedder(cfg.Embed.BaseURL, cfg.Embed.APIKey, cfg.Embed.Model, cfg.EmbedDim)
+		idx.Dim = cfg.EmbedDim
+	}
+	if cfg.RerankOK() {
+		timeout := time.Duration(cfg.RerankTimeoutMS) * time.Millisecond
+		idx.Reranker = memory.NewHTTPReranker(cfg.Rerank.BaseURL, cfg.Rerank.APIKey, cfg.Rerank.Model, timeout)
+		idx.RerankTimeout = timeout
+	}
+	ev.OnInsert = idx.IndexTx
+	if err := idx.Sync(ctx); err != nil {
 		return err
 	}
-	reg, err := plugin.Load(cfg.PluginsDir, cfg.Workerspace)
+	reg, err := plugin.Load(cfg.PluginsDir, cfg.Workspace, cfg.HostRoot)
 	if err != nil {
 		return err
 	}
@@ -76,8 +101,10 @@ func runServe(cfg config.Config) error {
 	reg.Put(task.NewHost(sqlDB, ev))
 	svc := run.NewService(sqlDB, ev)
 	svc.Plugins = reg
+	svc.Index = idx
 	svc.Flash = cfg.Flash
 	svc.Pro = cfg.Pro
+	svc.PromptsDir = cfg.PromptsDir
 	svc.Worker = worker.NewProcess(cfg.Python, cfg.Agent, append(os.Environ(),
 		"DESK_MODEL_BASE_URL="+cfg.Model.BaseURL,
 		"DESK_MODEL_API_KEY="+cfg.Model.APIKey,
@@ -89,7 +116,8 @@ func runServe(cfg config.Config) error {
 
 	mux := httpapi.NewMux(httpapi.Deps{
 		DB:        sqlDB,
-		Workspace: cfg.Workerspace,
+		Workspace: cfg.Workspace,
+		WebDir:    cfg.WebDir,
 		Sessions:  session.NewStore(sqlDB),
 		Runs:      run.NewStore(sqlDB),
 		Messages:  svc,

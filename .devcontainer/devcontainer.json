@@ -1,0 +1,38 @@
+{
+  "name": "desk",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "APT_MIRROR": "${localEnv:DESK_APT_MIRROR:https://mirrors.aliyun.com}",
+      "NODE_MIRROR": "${localEnv:DESK_NODE_MIRROR:https://npmmirror.com/mirrors/node}",
+      "NPM_REGISTRY": "${localEnv:DESK_NPM_REGISTRY:https://registry.npmmirror.com}",
+      "GOPROXY": "${localEnv:DESK_GOPROXY:https://goproxy.cn,direct}"
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "version": "latest",
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "containerEnv": {
+    "GOPROXY": "${localEnv:DESK_GOPROXY:https://goproxy.cn,direct}",
+    "NPM_CONFIG_REGISTRY": "${localEnv:DESK_NPM_REGISTRY:https://registry.npmmirror.com}"
+  },
+  "forwardPorts": [
+    8080,
+    5173
+  ],
+  "postCreateCommand": "go mod download && npm --prefix web ci",
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "ms-python.python",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
+}

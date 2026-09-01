@@ -1,0 +1,11 @@
+FROM docker.1panel.live/library/postgres:16-alpine
+RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.aliyun.com/alpine#g' /etc/apk/repositories \
+    && apk add --no-cache --virtual .build-deps \
+        build-base git postgresql16-dev
+
+RUN git clone --depth 1 --branch v0.8.1 https://gitclone.com/github.com/pgvector/pgvector.git /tmp/pgvector \
+    && make -C /tmp/pgvector OPTFLAGS="" with_llvm=no \
+    && make -C /tmp/pgvector install with_llvm=no \
+    && rm -rf /tmp/pgvector \
+    && apk del .build-deps
+

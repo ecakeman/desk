@@ -1,3 +1,4 @@
+// Command search 在 cwd 上子串 grep；只读。
 package main
 
 import (

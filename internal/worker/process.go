@@ -9,6 +9,7 @@ import (
 	"sync"
 )
 
+// Process 复用每个 Run 的 python3 agent/worker.py 子进程。
 type Process struct {
 	Python string
 	Script string
@@ -24,10 +25,12 @@ type child struct {
 	out *bufio.Scanner
 }
 
+// NewProcess 不立刻起子进程；第一次 Handle 才 fork。
 func NewProcess(python, script string, env []string) *Process {
 	return &Process{Python: python, Script: script, Env: env, procs: map[string]*child{}}
 }
 
+// Handle 写一条 In，读到非 message.delta 的 Out 为止；delta 经 emit 落事件。
 func (p *Process) Handle(in In, emit func(Out) error) (*Out, error) {
 	if in.RunID == "" {
 		return nil, fmt.Errorf("worker_exit")
@@ -50,11 +53,11 @@ func (p *Process) Handle(in In, emit func(Out) error) (*Out, error) {
 		if err := json.Unmarshal(ch.out.Bytes(), &out); err != nil {
 			p.Done(in.RunID)
 			return nil, fmt.Errorf("worker_exit")
-	    }
+		}
 		if out.T == "message.delta" {
-			if emit != nil{
-				if err := emit(out); err != nil{
-					return nil,err
+			if emit != nil {
+				if err := emit(out); err != nil {
+					return nil, err
 				}
 			}
 			continue
@@ -63,6 +66,7 @@ func (p *Process) Handle(in In, emit func(Out) error) (*Out, error) {
 	}
 }
 
+// Done 杀掉该 Run 的子进程。
 func (p *Process) Done(runID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

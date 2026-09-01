@@ -1,3 +1,4 @@
+// Package config 从环境和 .env 装载进程配置；只在启动时读，不入业务表。
 package config
 
 import (
@@ -5,40 +6,52 @@ import (
 	"strings"
 )
 
-type ModelConfig struct{
+// ModelConfig 是一个模型槽位：聊天、embedding、rerank 共用同一组字段。
+type ModelConfig struct {
 	BaseURL string
-	APIKey string
-	Model string
+	APIKey  string
+	Model   string
 }
 
-type Config struct{
-	HTTPAddr      string
-	Workerspace   string
-	DatabaseURL   string
-	MigrationsDir string
-	PluginsDir    string
-	Python        string
-    Agent         string
-	Model         ModelConfig
-	Flash         ModelConfig
-	Pro           ModelConfig
-	
+// Config 是 desk serve 的全部进程配置。
+type Config struct {
+	HTTPAddr        string
+	Workspace       string
+	HostRoot        string
+	DatabaseURL     string
+	MigrationsDir   string
+	PluginsDir      string
+	PromptsDir      string
+	WebDir          string
+	Python          string
+	Agent           string
+	Model           ModelConfig
+	Flash           ModelConfig
+	Pro             ModelConfig
+	Embed           ModelConfig
+	EmbedDim        int
+	Rerank          ModelConfig
+	RerankTimeoutMS int
 }
 
-func Load() Config{
+// Load 先读 .env 再读环境变量；已存在的环境变量不被 .env 覆盖。
+func Load() Config {
 	loadDotEnv(".env")
 	c := Config{
-		HTTPAddr: getenv("DESK_HTTP_ADDR", ":8080"),
-		Workerspace: getenv("DESK_WORKERSAPCE", "."),
-		DatabaseURL: getenv("DESK_DATABASE_URL", "postgres://desk:desk@localhost:5432/desk?sslmode=disable"),
+		HTTPAddr:      getenv("DESK_HTTP_ADDR", ":8080"),
+		Workspace:     getenv("DESK_WORKSPACE", getenv("DESK_WORKERSAPCE", ".")),
+		HostRoot:      getenv("DESK_HOST_ROOT", ""),
+		DatabaseURL:   getenv("DESK_DATABASE_URL", "postgres://desk:desk@localhost:5432/desk?sslmode=disable"),
 		MigrationsDir: getenv("DESK_MIGRATION_DIR", "migrations"),
-		PluginsDir: getenv("DESK_PLUGINS_DIR", "plugins"),
-		Python: getenv("DESK_PYTHON", "python3"),
-		Agent:  getenv("DESK_AGENT", "agent/worker.py"),
+		PluginsDir:    getenv("DESK_PLUGINS_DIR", "plugins"),
+		PromptsDir:    getenv("DESK_PROMPTS_DIR", "prompts"),
+		WebDir:        getenv("DESK_WEB_DIR", "web/dist"),
+		Python:        getenv("DESK_PYTHON", "python3"),
+		Agent:         getenv("DESK_AGENT", "agent/worker.py"),
 		Model: ModelConfig{
 			BaseURL: getenv("DESK_MODEL_BASE_URL", ""),
-			APIKey: getenv("DESK_MODEL_API_KEY", ""),
-			Model: getenv("DESK_MODEL_MODEL", ""),
+			APIKey:  getenv("DESK_MODEL_API_KEY", ""),
+			Model:   getenv("DESK_MODEL_MODEL", ""),
 		},
 		Flash: modelSlot("DESK_FLASH", ModelConfig{
 			BaseURL: getenv("DESK_MODEL_BASE_URL", ""),
@@ -50,8 +63,30 @@ func Load() Config{
 			APIKey:  getenv("DESK_MODEL_API_KEY", ""),
 			Model:   getenv("DESK_MODEL_MODEL", ""),
 		}),
+		Embed: ModelConfig{
+			BaseURL: getenv("DESK_EMBEDDING_BASE_URL", ""),
+			APIKey:  getenv("DESK_EMBEDDING_API_KEY", ""),
+			Model:   getenv("DESK_EMBEDDING_MODEL", ""),
+		},
+		EmbedDim: getenvInt("DESK_EMBEDDING_DIM", 0),
+		Rerank: ModelConfig{
+			BaseURL: getenv("DESK_RERANK_BASE_URL", ""),
+			APIKey:  getenv("DESK_RERANK_API_KEY", ""),
+			Model:   getenv("DESK_RERANK_MODEL", ""),
+		},
+		RerankTimeoutMS: getenvInt("DESK_RERANK_TIMEOUT_MS", 3000),
 	}
 	return c
+}
+
+// EmbedOK 表示 embedding 三件套（URL、模型、维度）都齐，才挂 HTTPEmbedder。
+func (c Config) EmbedOK() bool {
+	return c.Embed.BaseURL != "" && c.Embed.Model != "" && c.EmbedDim > 0
+}
+
+// RerankOK 表示 rerank 的 URL 和模型都齐；未配则 Search 停在 BM25/RRF。
+func (c Config) RerankOK() bool {
+	return c.Rerank.BaseURL != "" && c.Rerank.Model != ""
 }
 
 func modelSlot(prefix string, fallback ModelConfig) ModelConfig {
@@ -63,10 +98,25 @@ func modelSlot(prefix string, fallback ModelConfig) ModelConfig {
 }
 
 func getenv(key, fallback string) string {
-	if v:=os.Getenv(key); v!=""{
+	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+func getenvInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	n := 0
+	for _, r := range v {
+		if r < '0' || r > '9' {
+			return fallback
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
 }
 
 func loadDotEnv(path string) {

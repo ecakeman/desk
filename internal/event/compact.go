@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 )
 
+// MaxSTMChars 是投影字符上限；超过则 EnsureCompact 写 episode.compacted。
 const MaxSTMChars = 8000
 
 type compactPayload struct {
@@ -13,6 +14,7 @@ type compactPayload struct {
 	BasedOn []int  `json:"based_on"`
 }
 
+// EnsureCompact 超长时把一批旧 tool.completed 收成一条 compacted 事件；仍是事实。
 func (s *Store) EnsureCompact(ctx context.Context, sessionID, currentRunID string) error {
 	rows, err := s.sessionRows(ctx, sessionID)
 	if err != nil {
