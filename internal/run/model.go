@@ -34,7 +34,7 @@ func (s *Service) applySlot(in *worker.In) {
 	in.APIKey = cfg.APIKey
 }
 
-// ask 一次模型回合：钉 system、选槽、把 message.delta 写成事件。
+// ask 一次模型回合：钉稳定 system、把 phase 放在消息尾部、选槽并记录 delta。
 func (s *Service) ask(ctx context.Context, runID string, snapshot *prompt.Snapshot, in worker.In) (*worker.Out, error) {
 	in.RunID = runID
 	if in.Phase == "review" {
@@ -44,7 +44,8 @@ func (s *Service) ask(ctx context.Context, runID string, snapshot *prompt.Snapsh
 		}
 	}
 	s.applySlot(&in)
-	in.System = snapshot.System(in.Phase)
+	in.System = snapshot.System()
+	in.Runtime = snapshot.Runtime(in.Phase)
 	in.PromptHash = snapshot.Hash()
 	out, err := s.Worker.Handle(in, func(out worker.Out) error {
 		if out.T != "message.delta" || out.Text == "" {

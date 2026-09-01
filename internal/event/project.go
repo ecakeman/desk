@@ -106,7 +106,12 @@ func (s *Store) Messages(ctx context.Context, sessionID, currentRunID string) ([
 			if p.ID != "" {
 				line = "task " + p.ID + " " + p.Status + " " + p.Title
 			}
-			out = append(out, map[string]any{"role": "user", "content": Redact(line)})
+			out = append(out, map[string]any{
+				"role": "user",
+				"content": Redact(
+					"[CONTEXT: TASK]\n" + line + "\n[/CONTEXT]",
+				),
+			})
 		}
 	}
 	return out, nil

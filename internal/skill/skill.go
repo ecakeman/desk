@@ -136,8 +136,11 @@ func InjectPaths(work string, paths []string) []map[string]any {
 			continue
 		}
 		out = append(out, map[string]any{
-			"role":    "user",
-			"content": event.Redact("[skill " + rel + "@" + DiffHead(string(b)) + "]\n" + Clip(string(b))),
+			"role": "user",
+			"content": event.Redact(
+				"[CONTEXT: SKILL]\n[skill " + rel + "@" + DiffHead(string(b)) + "]\n" +
+					Clip(string(b)) + "\n[/CONTEXT]",
+			),
 		})
 	}
 	return out

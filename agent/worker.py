@@ -27,7 +27,7 @@ def apply_host_model(msg):
 
 
 def apply_host_system(msg):
-    """替换 messages[0] 的 system；每次 ask 都会换。"""
+    """安装稳定的 system；后续回合只会写入相同内容。"""
     system = msg.get("system")
     if not isinstance(system, str) or not system:
         return
@@ -36,6 +36,13 @@ def apply_host_system(msg):
         messages[0] = item
     else:
         messages.insert(0, item)
+
+
+def append_runtime(msg):
+    """把当前 phase 策略作为动态数据追加到历史尾部。"""
+    runtime = msg.get("runtime")
+    if isinstance(runtime, str) and runtime:
+        messages.append({"role": "user", "content": runtime})
 
 
 def openai_tools(raw):
@@ -166,6 +173,7 @@ for line in sys.stdin:
         messages.extend(msg.get("messages") or [])
         apply_host_system(msg)
         tools = openai_tools(msg.get("tools"))
+        append_runtime(msg)
         out = chat()
     elif t == "tool.result":
         if msg.get("ok"):
@@ -180,6 +188,7 @@ for line in sys.stdin:
         })
         messages.extend(msg.get("messages") or [])
         apply_host_system(msg)
+        append_runtime(msg)
         out = chat()
     elif t == "tool.denied":
         messages.append({
@@ -189,6 +198,7 @@ for line in sys.stdin:
         })
         messages.extend(msg.get("messages") or [])
         apply_host_system(msg)
+        append_runtime(msg)
         out = chat()
     else:
         out = {"t": "turn.fail", "error": "unknown t: " + str(t)}

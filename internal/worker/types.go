@@ -15,6 +15,7 @@ type In struct {
 	Model      string           `json:"model,omitempty"`
 	Phase      string           `json:"phase,omitempty"`
 	System     string           `json:"system,omitempty"`
+	Runtime    string           `json:"runtime,omitempty"`
 	PromptHash string           `json:"prompt_hash,omitempty"`
 	APIModel   string           `json:"api_model,omitempty"`
 	BaseURL    string           `json:"base_url,omitempty"`

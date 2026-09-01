@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // Registry 持有已注册插件；Workspace 是 workspace 根的绝对路径。
@@ -80,6 +81,9 @@ func (r *Registry) Tools() []Tool {
 			}
 		}
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
 	return out
 }
 

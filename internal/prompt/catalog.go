@@ -92,8 +92,16 @@ func (s *Snapshot) Files() []string {
 	return append([]string(nil), s.files...)
 }
 
-// System 是 base + 该 phase 文案；每次 ask 都会换 messages[0]。
-func (s *Snapshot) System(phase string) string {
+// System 返回所有回合共享的稳定行为契约。
+func (s *Snapshot) System() string {
+	if s == nil {
+		return ""
+	}
+	return s.base
+}
+
+// Runtime 返回当前 phase 的动态策略，供 Worker 追加到消息尾部。
+func (s *Snapshot) Runtime(phase string) string {
 	if s == nil {
 		return ""
 	}
@@ -101,7 +109,7 @@ func (s *Snapshot) System(phase string) string {
 	if phaseText == "" {
 		phaseText = s.phases["act"]
 	}
-	return s.base + "\n\n" + phaseText
+	return "[RUNTIME: PHASE]\n" + phaseText + "\n[/RUNTIME]"
 }
 
 // ApplyTools 用 prompts/tools/<name>.md 覆盖工具 description。
