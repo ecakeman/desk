@@ -158,9 +158,21 @@ export function Workspace() {
   }, [sessionId])
 
   useEffect(() => {
-    if (sessionId && !runId && runs[0]) {
-      const remembered = readLastRuns()[sessionId]
-      const pick = runs.find((item) => item.id === remembered) ?? runs[0]
+    if (!sessionId || runs.length === 0) return
+    const remembered = readLastRuns()[sessionId]
+    const validRemembered = runs.find((item) => item.id === remembered)
+    if (!runId) {
+      const pick = validRemembered ?? runs[0]
+      void navigate({
+        to: '/s/$sessionId/r/$runId',
+        params: { sessionId, runId: pick.id },
+        replace: true,
+      })
+      return
+    }
+    // 记住的 / URL 里的 run 已删时，落到该 Session 最新 Run，避免空白定位
+    if (!runs.some((item) => item.id === runId)) {
+      const pick = validRemembered ?? runs[0]
       void navigate({
         to: '/s/$sessionId/r/$runId',
         params: { sessionId, runId: pick.id },
@@ -222,6 +234,15 @@ export function Workspace() {
   const goSession = (id: string) => {
     setNavOpen(false)
     setMobilePane('chat')
+    // 一步到位：避免 /s/:id → 再自动跳 /r/:runId 造成「切换又定位」闪动
+    const remembered = readLastRuns()[id]
+    if (remembered) {
+      void navigate({
+        to: '/s/$sessionId/r/$runId',
+        params: { sessionId: id, runId: remembered },
+      })
+      return
+    }
     void navigate({ to: '/s/$sessionId', params: { sessionId: id } })
   }
   const goRun = (sid: string, rid: string) => {

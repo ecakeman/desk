@@ -22,6 +22,17 @@ type Hit struct {
 	Kind  string  `json:"kind"`
 }
 
+// SearchTrace 说明一次检索实际经过了哪些阶段。
+type SearchTrace struct {
+	LexicalHits    int  `json:"lexical_hits"`
+	EmbeddingTried bool `json:"embedding_tried"`
+	EmbeddingOK    bool `json:"embedding_ok"`
+	VectorHits     int  `json:"vector_hits"`
+	RerankTried    bool `json:"rerank_tried"`
+	RerankOK       bool `json:"rerank_ok"`
+	RerankFellBack bool `json:"rerank_fell_back"`
+}
+
 // Index 维护 memory_docs。Embedder / Reranker 为 nil 则跳过对应阶段。
 type Index struct {
 	DB            *sql.DB
@@ -106,6 +117,13 @@ func (i *Index) writeEmbedding(ctx context.Context, runID string, seq int, text 
 
 // Search：BM25（候选可 ILIKE 并入）→ 可选向量+RRF → 可选 rerank；rerank 失败退回融合序。
 func (i *Index) Search(ctx context.Context, q string, topK int) ([]Hit, error) {
+	hits, _, err := i.SearchWithTrace(ctx, q, topK)
+	return hits, err
+}
+
+// SearchWithTrace 返回命中及实际执行的检索阶段，供正式测试与回源审计。
+func (i *Index) SearchWithTrace(ctx context.Context, q string, topK int) ([]Hit, SearchTrace, error) {
+	var trace SearchTrace
 	if topK <= 0 {
 		topK = 8
 	}
@@ -115,22 +133,27 @@ func (i *Index) Search(ctx context.Context, q string, topK int) ([]Hit, error) {
 	}
 	lex, err := i.searchBM25(ctx, q, pool)
 	if err != nil {
-		return nil, err
+		return nil, trace, err
 	}
+	trace.LexicalHits = len(lex)
 	fused := lex
 	if i.Embedder != nil {
+		trace.EmbeddingTried = true
 		if vecq, err := i.Embedder.Embed(ctx, q); err == nil {
+			trace.EmbeddingOK = true
 			vec, err := i.searchVec(ctx, vecq, pool)
 			if err != nil {
-				return nil, err
+				return nil, trace, err
 			}
+			trace.VectorHits = len(vec)
 			fused = rrfMerge(lex, vec, pool)
 		}
 	}
 	fused = clipHits(fused, pool)
 	if i.Reranker == nil {
-		return clipHits(fused, topK), nil
+		return clipHits(fused, topK), trace, nil
 	}
+	trace.RerankTried = true
 	timeout := i.RerankTimeout
 	if timeout <= 0 {
 		timeout = 3 * time.Second
@@ -140,9 +163,11 @@ func (i *Index) Search(ctx context.Context, q string, topK int) ([]Hit, error) {
 	ranked, err := i.Reranker.Rerank(rctx, q, fused, topK)
 	if err != nil || ranked == nil {
 		// rerank 失败不得打掉检索；不伪造 rerank.success。
-		return clipHits(fused, topK), nil
+		trace.RerankFellBack = true
+		return clipHits(fused, topK), trace, nil
 	}
-	return clipHits(ranked, topK), nil
+	trace.RerankOK = true
+	return clipHits(ranked, topK), trace, nil
 }
 
 func (i *Index) searchBM25(ctx context.Context, q string, limit int) ([]Hit, error) {
@@ -319,6 +344,10 @@ func (i *Index) Sync(ctx context.Context) error {
 		existing[key{runID: runID, seq: seq}] = doc{
 			kind: kind, text: text, hasEmbedding: hasEmbedding,
 		}
+	}
+	if err := docRows.Err(); err != nil {
+		docRows.Close()
+		return err
 	}
 	if err := docRows.Close(); err != nil {
 		return err

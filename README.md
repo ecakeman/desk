@@ -1,182 +1,248 @@
 # Desk
 
-Desk 是一个面向本地单机的 Agent 控制面：Go 服务负责会话、Run、审批、事件流和记忆，
-Python 3 标准库 Worker 调用 OpenAI 兼容模型，React/Vite Dashboard 展示运行状态，
-Postgres + pgvector 保存事实与向量索引。
+Desk 是一个本地优先的 Agent 控制面。
+
+Go 负责 Run、事件、审批和状态。Python 负责模型调用。PostgreSQL 保存持久状态，并用 pgvector 支撑 memory。Workspace 工具让 Agent 检查和修改本地文件。React 提供 Dashboard。
+
+**Desk 把 Agent 执行当成可观察的事件驱动运行时，而不是一次模型 API 调用。**
 
 ## 架构
 
 ```text
-CLI (desk chat/show) ─┐
-                      ├─ HTTP/SSE ─> Gin API ─> session/run/event/memory ─> Postgres + pgvector
-React Dashboard ──────┘                    │
-                                          ├─ subprocess ─> Python Worker ─> 模型 API
-                                          └─ subprocess ─> fs/search 插件 ─> 本地工作区
+CLI / Dashboard
+       │
+     HTTP/SSE
+       │
+       ▼
+┌───────────────┐
+│ Go Control    │
+│ Plane         │
+└───────┬───────┘
+        │
+ ┌──────┼──────────────┐
+ ▼      ▼              ▼
+DB    Worker         Plugins
+       │              │
+       ▼              ▼
+   Flash / Pro     Workspace
 ```
 
-所有组件都运行在一台开发机上。Go 服务在启动时执行 `migrations/*.sql`，提供 `/v1`
-API、SSE 事件流，并在 `web/dist` 存在时托管 Dashboard。Worker 不依赖第三方 Python
-包；插件是由 Go 编译出的独立进程。
+- **Go**：session / run / event / approval，以及 `plan` → `act` → `review` 编排。
+- **Python**：OpenAI 兼容的 chat completions 与 tool-call 协议。
+- **PostgreSQL + pgvector**：持久事件、task，以及 memory 索引。
+- **Plugins**：在 jail 限定的工作区上做文件系统与搜索；memory / task 作为宿主持有的工具。
+- **React / Vite**：Dashboard 走同一套 HTTP/SSE。CLI（`desk chat` / `desk show`）是客户端，不是第二套运行时。
 
-## 前置条件
+以上都在一台机器上运行。
 
-推荐使用 Dev Container，只需宿主机提供：
+## 能力
 
-- Docker Engine 或 Docker Desktop（包含 Compose v2）
-- 支持 Dev Containers 的编辑器
+| 方面   | Desk 提供的内容                    |
+| ------ | ---------------------------------- |
+| 运行时 | plan → act → review                |
+| 模型   | Flash / Pro 槽位                   |
+| 工具   | filesystem、search、memory、tasks  |
+| Memory | PostgreSQL + pgvector              |
+| 安全   | 写操作需要审批                     |
+| 可观察 | events + SSE + Dashboard           |
+| Prompt | 版本化 catalog + 稳定 runtime 前缀 |
+| 测试   | 隔离的测试数据库                   |
 
-直接在宿主机运行时需要：
+plan / review 走 Pro 槽，act 走 Flash。Prefix cache 按槽位隔离。单个 Run 最多进入 2 次 Pro review；超出后改走 act。
 
-- Go 1.25
-- Python 3
-- Node.js 22.12+ 和 npm
-- Docker Compose v2
+## 快速开始
 
-仓库提交的是 `web/package-lock.json`，因此可复现构建使用 `npm ci`。Dev Container
-同时安装 pnpm，供交互开发使用，但不要在没有同步锁文件的情况下用 pnpm 替代 CI
-安装流程。
+**推荐：** Dev Container（Go 1.25、Python 3、Node 22、Docker-outside-of-Docker）。宿主机只需 Docker 和支持 Dev Containers 的编辑器。
 
-### 国内镜像
+否则需要：
 
-`.devcontainer/Dockerfile` 默认使用阿里云 Debian apt、npmmirror Node/npm 和
-`goproxy.cn`。打开 Dev Container 前可在宿主环境覆盖：
-
-```bash
-export DESK_APT_MIRROR=https://your-mirror.example
-export DESK_NODE_MIRROR=https://your-mirror.example/node
-export DESK_NPM_REGISTRY=https://your-mirror.example/npm/
-export DESK_GOPROXY=https://your-mirror.example/go/,direct
+```text
+Docker / Docker Compose v2
+Go 1.25
+Python 3
+Node.js 22.12+
 ```
-
-Postgres 开发镜像沿用 `deployments/Dockerfile.postgres` 中已有的镜像源。GitHub
-Actions 使用公开官方镜像，不依赖本地镜像配置。
-
-## 配置
-
-从模板生成本地配置：
 
 ```bash
 cp .env.example .env
-```
+# 填写 DESK_MODEL_*，或 DESK_FLASH_* + DESK_PRO_*
 
-常用变量：
-
-- `DESK_HTTP_ADDR`：监听地址，默认 `:8080`
-- `DESK_WORKSPACE`：插件可访问的本地工作区
-- `DESK_DATABASE_URL`：Postgres DSN
-- `DESK_PROMPTS_DIR`、`DESK_WEB_DIR`：Prompt 和静态 Dashboard 目录
-- `DESK_MODEL_*`：默认模型；`BASE_URL` 应是完整的 OpenAI 兼容 chat completions 地址
-- `DESK_FLASH_*`、`DESK_PRO_*`：可选模型档位，未设置时回退到默认模型
-- `DESK_EMBEDDING_*`：可选 embedding 地址、模型和维度；地址可写 API 根路径或
-  `/embeddings` 完整地址
-- `DESK_RERANK_*`：可选 rerank 地址、模型和超时；未配置或调用失败时 Search 退回 RRF/BM25 顺序
-
-`.env` 只用于本机，API Key 不应写进 README、命令行、Git 提交或 CI。模板中的 Key
-保持为空；真实模型和 embedding 只在本地配置。
-
-## 构建与运行
-
-```bash
 make db-up
 make db-migrate
 make build
 make serve
 ```
 
-`make db-up` 构建并启动本地 pgvector Postgres；`make db-migrate` 显式应用 SQL。
-`make serve` 会重新构建后在 `http://127.0.0.1:8080` 启动 Desk，服务启动时也会
-幂等执行迁移。检查：
+健康检查：
 
 ```bash
 curl http://127.0.0.1:8080/healthz
 ```
 
-停止数据库：
+Dashboard：[http://127.0.0.1:8080](http://127.0.0.1:8080)
 
-```bash
-make db-down
-```
-
-## CLI
-
-服务运行后，在另一个终端启动新会话：
+CLI（需先启动服务）：
 
 ```bash
 ./bin/desk chat
-```
-
-继续已有会话或查看事件：
-
-```bash
 ./bin/desk chat <session_id>
 ./bin/desk show <session_id>
 ```
 
-交互中 `/quit` 退出，`/stop` 取消最近一次 Run；写操作会出现 `y/n` 审批。
+聊天中 `/quit` 退出，`/stop` 取消最近一次 Run；写操作等待 `y/n`。
 
-## Dashboard
+## 配置
 
-生产式本地构建由 Go 服务直接托管：
+从 `.env.example` 复制为 `.env`。不要提交 `.env`。Desk 通过 OpenAI 兼容 HTTP 接口调用模型，不为不同供应商增加额外适配层。
+
+### 核心
+
+```text
+DESK_HTTP_ADDR      # 默认 :8080
+DESK_WORKSPACE      # 插件 jail 根目录；默认 .
+DESK_DATABASE_URL   # Postgres DSN（库名 desk）
+```
+
+### Prompt / Web
+
+```text
+DESK_PROMPTS_DIR    # 默认 prompts
+DESK_WEB_DIR        # 默认 web/dist
+```
+
+每个 Run 开始时会对 catalog 做快照（稳定 system 前缀、phase / task / skill / memory 的 runtime 上下文、稳定工具顺序）。改 `prompts/` 会影响下一个 Run，无需重启进程。
+
+### 默认模型
+
+```text
+DESK_MODEL_BASE_URL
+DESK_MODEL_API_KEY
+DESK_MODEL_MODEL
+```
+
+`BASE_URL` 使用对应第三方提供的兼容 chat completions 地址。
+
+### 模型槽位
+
+```text
+DESK_FLASH_BASE_URL
+DESK_FLASH_API_KEY
+DESK_FLASH_MODEL
+
+DESK_PRO_BASE_URL
+DESK_PRO_API_KEY
+DESK_PRO_MODEL
+```
+
+Flash / Pro 某字段为空时，回退到 `DESK_MODEL_*`。
+
+### Embedding / Rerank
+
+```text
+DESK_EMBEDDING_BASE_URL
+DESK_EMBEDDING_API_KEY
+DESK_EMBEDDING_MODEL
+DESK_EMBEDDING_DIM
+
+DESK_RERANK_BASE_URL
+DESK_RERANK_API_KEY
+DESK_RERANK_MODEL
+DESK_RERANK_TIMEOUT_MS
+```
+
+embedding / rerank 为可选。未配置或 rerank 失败时，Search 退回 BM25 / RRF。
+
+## 部署
+
+Desk 的定位是**本地单机运行**，不是托管式多租户服务。
+
+### 本地 / Dev Container
+
+推荐开发方式：在 Dev Container 中打开仓库，再执行「快速开始」中的命令。
+
+### Docker / PostgreSQL
+
+`make db-up` 会构建并启动项目所需的 PostgreSQL + pgvector。初始化脚本同时创建 Go 测试用的 `desk_test`。`make db-down` 停止该栈。
+
+### 接近发布的本地构建
 
 ```bash
 make web
+make build
 make serve
-# http://127.0.0.1:8080
 ```
 
-前端热更新模式需要 Go 服务已运行：
+若存在 `web/dist`，Go 服务会直接托管它。若需要前端热更新，可在 `desk serve` 已运行时执行 `npm --prefix web run dev`（端口 5173），Vite 会把 `/v1` 代理到 `127.0.0.1:8080`。
+
+### 测试库
+
+集成测试使用独立的 `desk_test` 数据库，绝不回落到生产用的 `DESK_DATABASE_URL`。
+
+## 开发
 
 ```bash
-npm --prefix web ci
-npm --prefix web run dev
-# http://127.0.0.1:5173
-```
-
-Vite 会把 `/v1` 代理到 `127.0.0.1:8080`。
-
-## Prompt 目录
-
-`prompts/` 是运行时 Prompt catalog：
-
-- `system/base.md`：所有阶段共享的系统约束
-- `phases/{plan,act,review}.md`：阶段说明
-- `tools/*.md`：各工具暴露给模型的描述
-
-这些文件在服务启动时先做完整性校验；每个 Run 开始时固定一份快照并计算 hash。
-修改文案会影响下一个 Run，无需重启服务，正在执行的 Run 不漂移。Prompt 不是
-Python Worker 内的硬编码模板。
-
-## 测试与检查
-
-```bash
-make fmt             # 格式化 Go
-make fmt-check       # 只检查，不改文件
-make vet             # Go 静态检查
-make test            # Go 测试；数据库不可用时相关测试按现有逻辑跳过
-make test-integration # 启动/迁移 Postgres，并以 -p 1 串行执行全部 Go 测试
+make fmt
+make vet
+make test
+make test-integration
 make web-lint
 make web-test
-make web             # npm ci + typecheck/Vite build
-docker run --rm --ipc=host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -v "$PWD/web:/work" -w /work \
-  mcr.microsoft.com/playwright:v1.62.1-noble npm run e2e
+make web
 ```
 
-测试层级：
+Go 集成测试跑在隔离的测试库上；真实模型 / embedding 调用不进入 CI。
 
-1. Go 单元测试：纯状态、Prompt、jail、投影等，不要求外部服务。
-2. Go/Postgres 集成测试：事务、事件序列、HTTP 路由和记忆索引；必须 `-p 1`
-   避免共享数据库中的并发互扰。
-3. Web：ESLint、Vitest、TypeScript 和 Vite build。
-4. 真实模型/embedding：仅本地人工验证，不进入 CI，不向 CI 注入供应商密钥。
+可选浏览器 E2E：`make web-e2e`（Docker 中的 Playwright）。
 
-GitHub Actions 分开执行无数据库的 Go 单元阶段、pgvector Postgres 集成阶段和 Web
-阶段。所有 Go 包枚举都由 `go` 工具完成，不扫描 `web/node_modules`。
+## Showcase
 
-## 非目标
+```text
+1 session · 4 consecutive runs · 1 small workspace
+```
 
-- 不是多租户 SaaS，不提供账号、鉴权、配额或租户隔离。
-- 不提供公网 TLS、云部署、水平扩展、HA、备份或灾备。
-- 插件路径检查和超时不是操作系统级安全沙箱，不应运行不受信任代码。
-- 不在 CI 调用真实模型或 embedding，也不管理生产密钥。
-- 不保证跨主机分布式 Worker、消息队列或远程插件协议。
+在未告知 Agent 应调用哪些工具、何时使用 memory / task、何时 review、以及不手工指定 phase 的前提下，连续维护 Bookmark Manager 规格（`bookmark-lab/`）：
+
+```text
+项目基线
+  ↓
+增量产品变更
+  ↓
+历史决策回顾
+  ↓
+review / 收口
+```
+
+| 信号                    | 结果 |
+| ----------------------- | ---: |
+| Flash 热前缀 cache      | ~93% |
+| 单 Run 最大 Pro review  |    2 |
+| Memory                  | 按需 |
+| Skill 修订              |    0 |
+
+Flash 与 Pro 使用各自独立的 cache 槽。
+
+最终结论：`PASS WITH OBSERVATIONS`
+
+这次 Showcase 暴露了文档维护时偏重工具调用的情况，但没有生命周期失败，也没有失控的 review 循环。
+
+## 项目状态
+
+```text
+V1 Pro
+Closed loop: 8/8
+Product: 6/6
+Observation: 2/2
+```
+
+V1 Pro 已冻结为本地单机 Agent 控制面。
+
+## 范围
+
+非目标：
+
+- 多租户 SaaS
+- 公有云部署
+- HA / 水平扩展
+- 分布式 Worker
+- 操作系统级沙箱
+- 在 CI 中调用真实模型

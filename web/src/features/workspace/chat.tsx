@@ -29,13 +29,16 @@ export function ChatPane({
 }) {
   const [draft, setDraft] = useState('')
   const [composer, setComposer] = useState(96)
+  const scroller = useRef<HTMLDivElement>(null)
   const bottom = useRef<HTMLDivElement>(null)
   const seenSession = useRef(sessionId)
 
+  // 切换 Session 时若沿用旧 scrollTop，短对话会被滚出视口，看起来像「没有对话」。
   useEffect(() => {
+    const el = scroller.current
     if (sessionId !== seenSession.current) {
       seenSession.current = sessionId
-      return
+      if (el) el.scrollTop = 0
     }
     bottom.current?.scrollIntoView({ block: 'end' })
   }, [bubbles, pending, sessionId])
@@ -65,7 +68,7 @@ export function ChatPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {bubbles.length === 0 && (
           <div className="mx-auto max-w-lg py-16 text-center text-sm text-muted-foreground">
             <p className="font-medium text-foreground">Desk 对话</p>

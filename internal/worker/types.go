@@ -24,10 +24,13 @@ type In struct {
 
 // Out 是 Python 回给宿主的一行；t 决定 Drive 下一步。
 type Out struct {
-	T     string         `json:"t"`
-	ID    string         `json:"id,omitempty"`
-	Name  string         `json:"name,omitempty"`
-	Args  map[string]any `json:"args,omitempty"`
-	Text  string         `json:"text,omitempty"`
-	Error string         `json:"error,omitempty"`
+	T            string         `json:"t"`
+	ID           string         `json:"id,omitempty"`
+	Name         string         `json:"name,omitempty"`
+	Args         map[string]any `json:"args,omitempty"`
+	Text         string         `json:"text,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	InputTokens  int            `json:"input_tokens,omitempty"`
+	OutputTokens int            `json:"output_tokens,omitempty"`
+	CachedTokens int            `json:"cached_tokens,omitempty"`
 }

@@ -20,6 +20,7 @@ const (
 	TypeSkillChallenge   = "skill.challenge"
 	TypeSkillOverridden  = "skill.overridden"
 	TypeMemoryRetrieved  = "memory.retrieved"
+	TypeModelUsage       = "model.usage"
 	TypePromptApplied    = "prompt.applied"
 	TypeReviewCompleted  = "review.completed"
 )

@@ -40,12 +40,12 @@ func (h *Host) Exec(ctx context.Context, op string, args map[string]any) (json.R
 		return nil, fmt.Errorf("unknown_op: %s", op)
 	}
 	q, _ := args["query"].(string)
-	hits, err := h.idx.Search(ctx, q, 8)
+	hits, trace, err := h.idx.SearchWithTrace(ctx, q, 8)
 	if err != nil {
 		return nil, err
 	}
 	if hits == nil {
 		hits = []Hit{}
 	}
-	return json.Marshal(map[string]any{"hits": hits})
+	return json.Marshal(map[string]any{"hits": hits, "trace": trace})
 }

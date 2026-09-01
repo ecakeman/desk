@@ -48,6 +48,18 @@ func (s *Service) ask(ctx context.Context, runID string, snapshot *prompt.Snapsh
 	in.Runtime = snapshot.Runtime(in.Phase)
 	in.PromptHash = snapshot.Hash()
 	out, err := s.Worker.Handle(in, func(out worker.Out) error {
+		if out.T == "model.usage" {
+			_, err := s.appendOne(ctx, runID, event.TypeModelUsage, map[string]any{
+				"model":         in.Model,
+				"api_model":     in.APIModel,
+				"phase":         in.Phase,
+				"prompt_hash":   in.PromptHash,
+				"input_tokens":  out.InputTokens,
+				"output_tokens": out.OutputTokens,
+				"cached_tokens": out.CachedTokens,
+			})
+			return err
+		}
 		if out.T != "message.delta" || out.Text == "" {
 			return nil
 		}

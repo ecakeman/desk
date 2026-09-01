@@ -54,7 +54,7 @@ func (p *Process) Handle(in In, emit func(Out) error) (*Out, error) {
 			p.Done(in.RunID)
 			return nil, fmt.Errorf("worker_exit")
 		}
-		if out.T == "message.delta" {
+		if out.T == "message.delta" || out.T == "model.usage" {
 			if emit != nil {
 				if err := emit(out); err != nil {
 					return nil, err

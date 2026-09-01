@@ -69,11 +69,28 @@ def openai_tools(raw):
     return out
 
 
+def emit_usage(usage):
+    """把供应商 usage 归一化成宿主可记录的字段。"""
+    if not isinstance(usage, dict):
+        return
+    details = usage.get("prompt_tokens_details")
+    if not isinstance(details, dict):
+        details = {}
+    item = {
+        "t": "model.usage",
+        "input_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0,
+        "output_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0,
+        "cached_tokens": details.get("cached_tokens", usage.get("cached_tokens", 0)) or 0,
+    }
+    print(json.dumps(item, ensure_ascii=False), flush=True)
+
+
 def chat():
     """对流式 chat/completions：内容分片回 message.delta，工具调用拼成 tool.request。"""
     body = {
         "model": MODEL,
         "stream": True,
+        "stream_options": {"include_usage": True},
         "messages": messages,
     }
     if tools:
@@ -90,6 +107,7 @@ def chat():
     acc = []
     reason = []
     tcs = {}
+    usage = None
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             while True:
@@ -103,6 +121,8 @@ def chat():
                 if data == "[DONE]":
                     break
                 obj = json.loads(data)
+                if isinstance(obj.get("usage"), dict):
+                    usage = obj["usage"]
                 delta = (obj.get("choices") or [{}])[0].get("delta") or {}
                 if delta.get("reasoning_content"):
                     reason.append(delta["reasoning_content"])
@@ -126,6 +146,7 @@ def chat():
         return {"t": "turn.fail", "error": str(e)}
 
     if tcs:
+        emit_usage(usage)
         slot = tcs[min(tcs)]
         try:
             args = json.loads(slot["arguments"] or "{}")
@@ -153,6 +174,7 @@ def chat():
             "args": args,
         }
     text = "".join(acc)
+    emit_usage(usage)
     asst = {"role": "assistant", "content": text}
     rs = "".join(reason)
     if rs:

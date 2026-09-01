@@ -45,10 +45,25 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 	}
 	nFlash := 0
 	nFail := 0
+	nProReview := 0
 	phase := "plan"
 	slot := "pro"
 
-	out, err := s.ask(ctx, runID, snapshot, worker.In{
+	ask := func(in worker.In) (*worker.Out, error) {
+		in.Phase = boundReview(in.Phase, nProReview)
+		phase = in.Phase
+		if in.Phase == "review" {
+			nProReview++
+		}
+		out, err := s.ask(ctx, runID, snapshot, in)
+		if err != nil {
+			return nil, err
+		}
+		slot = slotOf(phase)
+		return out, nil
+	}
+
+	out, err := ask(worker.In{
 		T:        "turn.start",
 		RunID:    runID,
 		Messages: msgs,
@@ -58,7 +73,6 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 	if err != nil {
 		return err
 	}
-	slot = slotOf(phase)
 
 	for i := 0; i < 64; i++ {
 		switch out.T {
@@ -66,11 +80,10 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 			data, err := s.runTool(ctx, runID, phase, out)
 			id := out.ID
 			if errors.Is(err, errDenied) {
-				out, err = s.ask(ctx, runID, snapshot, worker.In{T: "tool.denied", ID: id, Phase: phase})
+				out, err = ask(worker.In{T: "tool.denied", ID: id, Phase: phase})
 				if err != nil {
 					return err
 				}
-				slot = slotOf(phase)
 				continue
 			}
 			var tf toolFailedError
@@ -81,7 +94,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 				} else {
 					phase = "act"
 				}
-				out, err = s.ask(ctx, runID, snapshot, worker.In{
+				out, err = ask(worker.In{
 					T:     "tool.result",
 					RunID: runID,
 					ID:    id,
@@ -92,7 +105,6 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 				if err != nil {
 					return err
 				}
-				slot = slotOf(phase)
 				continue
 			}
 			if err != nil {
@@ -105,7 +117,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 			} else {
 				phase = "act"
 			}
-			out, err = s.ask(ctx, runID, snapshot, worker.In{
+			out, err = ask(worker.In{
 				T:     "tool.result",
 				RunID: runID,
 				ID:    id,
@@ -116,7 +128,6 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 			if err != nil {
 				return err
 			}
-			slot = slotOf(phase)
 		case "turn.finish":
 			return s.finish(ctx, runID, out.Text, slot, phase, snapshot.Hash())
 		case "turn.fail":
@@ -126,4 +137,15 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 		}
 	}
 	return fmt.Errorf("tool_limit")
+}
+
+// maxProReview 是单个 Run 内 phase=review 且走 Pro 槽的次数上限。
+const maxProReview = 2
+
+// boundReview：Pro review 预算用尽后不再进入 review，改走 act，不强制 finish。
+func boundReview(phase string, nProReview int) string {
+	if phase == "review" && nProReview >= maxProReview {
+		return "act"
+	}
+	return phase
 }

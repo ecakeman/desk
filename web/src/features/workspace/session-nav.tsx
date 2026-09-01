@@ -151,7 +151,22 @@ export function SessionNav({
   }, [menu])
 
   useLayoutEffect(() => {
-    if (listRef.current) listRef.current.scrollTop = scrollTop.current
+    const list = listRef.current
+    if (!list) return
+    list.scrollTop = scrollTop.current
+    if (!selectedSessionID) return
+    const node = list.querySelector(
+      `[data-session-id="${CSS.escape(selectedSessionID)}"]`,
+    )
+    if (!(node instanceof HTMLElement)) return
+    const viewTop = list.scrollTop
+    const viewBottom = viewTop + list.clientHeight
+    const top = node.offsetTop
+    const bottom = top + node.offsetHeight
+    if (top < viewTop || bottom > viewBottom) {
+      node.scrollIntoView({ block: 'nearest' })
+      scrollTop.current = list.scrollTop
+    }
   }, [selectedSessionID, runs.length])
 
   const persistFolds = (ids: string[]) => {
@@ -260,6 +275,7 @@ export function SessionNav({
       <button
         type="button"
         key={session.id}
+        data-session-id={session.id}
         aria-label={`Session ${session.id}`}
         title={title}
         className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-sm text-sidebar-foreground hover:bg-sidebar-accent ${
