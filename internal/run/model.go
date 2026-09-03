@@ -60,6 +60,12 @@ func (s *Service) ask(ctx context.Context, runID, sessionID, workspace string, s
 		pending = in.ID
 	}
 	cm := s.contextMgr()
+	var specs []ctxmgr.ToolSpec
+	if s.Plugins != nil && snapshot != nil {
+		for _, t := range snapshot.ApplyTools(s.Plugins.Tools()) {
+			specs = append(specs, ctxmgr.ToolSpec{Name: t.Name, Description: t.Description, Parameters: t.Parameters})
+		}
+	}
 	asm, err := cm.Prepare(ctx, ctxmgr.PrepareIn{
 		SessionID:    sessionID,
 		RunID:        runID,
@@ -67,6 +73,8 @@ func (s *Service) ask(ctx context.Context, runID, sessionID, workspace string, s
 		Phase:        in.Phase,
 		PromptHash:   snapshot.Hash(),
 		Runtime:      snapshot.Runtime(in.Phase),
+		System:       snapshot.System(),
+		Tools:        specs,
 		PendingTool:  pending,
 		WantRetrieve: in.Phase == "review",
 	})

@@ -217,7 +217,7 @@ func TestTotalBudgetBoundsEstimate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := EstimateMessages(asm.Messages)
+	got := EstimateLLMInput("", nil, asm.Messages, "")
 	if got > m.Settings.TotalTokens {
 		t.Fatalf("estimate %d > total %d", got, m.Settings.TotalTokens)
 	}

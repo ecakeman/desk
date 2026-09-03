@@ -181,6 +181,33 @@ func TestChatHandleFailDoesNotWriteApplied(t *testing.T) {
 	}
 }
 
+func TestAskSuccessWritesApplied(t *testing.T) {
+	w := &recWorker{}
+	work := t.TempDir()
+	svc, db := contractEnv(t, w, work)
+	sess := testdb.InsertSession(t, db)
+	runID := ids.New()
+	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running',$3)`, runID, sess, work); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := prompt.Load(svc.PromptsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ask(context.Background(), runID, sess, work, snapshot, worker.In{
+		T: "turn.start", Phase: "plan",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM events WHERE run_id=$1 AND type=$2`, runID, event.TypeContextApplied).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("applied=%d want 1 after chat success", n)
+	}
+}
+
 type failReplaceWorker struct {
 	inner    *recWorker
 	replaces int

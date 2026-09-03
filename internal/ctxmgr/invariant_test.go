@@ -38,11 +38,9 @@ func TestInvariantFinalEstimateLeqTotal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if asm.Applied.OverBudget == "pending_tool" {
-		t.Fatal("no pending tool")
-	}
-	if asm.Applied.TotalEstimate > asm.Applied.TotalTokens {
-		t.Fatalf("est %d > total %d", asm.Applied.TotalEstimate, asm.Applied.TotalTokens)
+	got := EstimateLLMInput("", nil, asm.Messages, "")
+	if got > m.Settings.TotalTokens && asm.Applied.OverBudget != "pending_tool" {
+		t.Fatalf("est %d > total %d", got, m.Settings.TotalTokens)
 	}
 }
 

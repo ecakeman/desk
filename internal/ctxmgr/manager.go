@@ -54,6 +54,8 @@ type PrepareIn struct {
 	Phase        string
 	PromptHash   string
 	Runtime      string
+	System       string
+	Tools        []ToolSpec
 	PendingTool  string
 	WantRetrieve bool
 	SkipCompact  bool
@@ -200,12 +202,13 @@ func (m *Manager) advanceLifecycle(ctx context.Context, in PrepareIn, st Setting
 	for pass := 0; pass < 6; pass++ {
 		layers := parseLayers(events, in.RunID, in.PendingTool)
 		stable := stableMsgs(layers, true)
+		reserved := reservedTokens(in)
 		dyn := EstimateMessages(skills) + EstimateMessages(ret) + EstimateTokens(in.Runtime)
 		pendingMin := 0
 		if n := len(layers.window); n > 0 && layers.window[n-1].Pending {
 			pendingMin = layers.window[n-1].tokens()
 		}
-		if EstimateMessages(stable)+pendingMin+dyn > st.TotalTokens {
+		if reserved+EstimateMessages(stable)+pendingMin+dyn > st.TotalTokens {
 			ok, _, err := m.maybeLarge(ctx, in.RunID, events, st, true)
 			if err != nil {
 				return "", changed, err
@@ -227,7 +230,7 @@ func (m *Manager) advanceLifecycle(ctx context.Context, in PrepareIn, st Setting
 			}
 			dyn = EstimateMessages(skills) + EstimateMessages(ret) + EstimateTokens(in.Runtime)
 		}
-		remaining := st.TotalTokens - EstimateMessages(stable) - dyn
+		remaining := st.TotalTokens - reserved - EstimateMessages(stable) - dyn
 		if remaining < 0 {
 			remaining = 0
 		}
@@ -238,6 +241,9 @@ func (m *Manager) advanceLifecycle(ctx context.Context, in PrepareIn, st Setting
 		progress := false
 		_, newly := splitUnits(layers.window, windowBudget)
 		if len(newly) > 0 {
+			if !m.compactReady(st) {
+				break
+			}
 			if err := m.appendJSON(ctx, in.RunID, event.TypeContextEvicted, EvictPayload{BasedOn: unitRefs(newly)}); err != nil {
 				return why, changed, err
 			}
@@ -285,6 +291,10 @@ func (m *Manager) advanceLifecycle(ctx context.Context, in PrepareIn, st Setting
 		}
 	}
 	return why, changed, nil
+}
+
+func (m *Manager) compactReady(st Settings) bool {
+	return m != nil && m.Compactor != nil && st.PromptsDir != ""
 }
 
 func (m *Manager) pendingSmallUnits(events []event.Event, runID, pending string, st Settings) (bool, []contextUnit) {
@@ -462,6 +472,7 @@ func (m *Manager) assemble(ctx context.Context, in PrepareIn, layers layer, even
 		ret = []map[string]any{rb}
 	}
 	window := layers.window
+	reserved := reservedTokens(in)
 	dyn := func() int {
 		return EstimateMessages(skills) + EstimateMessages(ret) + EstimateTokens(in.Runtime)
 	}
@@ -469,11 +480,11 @@ func (m *Manager) assemble(ctx context.Context, in PrepareIn, layers layer, even
 	if n := len(window); n > 0 && window[n-1].Pending {
 		pendingMin = window[n-1].tokens()
 	}
-	if EstimateMessages(stable)+pendingMin+dyn() > st.TotalTokens {
+	if reserved+EstimateMessages(stable)+pendingMin+dyn() > st.TotalTokens {
 		omitFacts = true
 		stable = stableMsgs(layers, false)
 	}
-	for EstimateMessages(stable)+EstimateMessages(unitMsgs(window))+dyn() > st.TotalTokens {
+	for reserved+EstimateMessages(stable)+EstimateMessages(unitMsgs(window))+dyn() > st.TotalTokens {
 		if len(ret) > 0 {
 			ret = nil
 			continue
@@ -512,7 +523,7 @@ func (m *Manager) assemble(ctx context.Context, in PrepareIn, layers layer, even
 	if msgs == nil {
 		msgs = []map[string]any{}
 	}
-	remaining := st.TotalTokens - EstimateMessages(stable) - dyn()
+	remaining := st.TotalTokens - reserved - EstimateMessages(stable) - dyn()
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -520,7 +531,9 @@ func (m *Manager) assemble(ctx context.Context, in PrepareIn, layers layer, even
 	if remaining < windowBudget {
 		windowBudget = remaining
 	}
-	totalEst := EstimateMessages(msgs) + EstimateTokens(in.Runtime)
+	sysEst := EstimateSystem(in.System)
+	toolEst := EstimateTools(in.Tools)
+	totalEst := EstimateLLMInput(in.System, in.Tools, msgs, in.Runtime)
 	over := ""
 	if totalEst > st.TotalTokens {
 		if n := len(window); n > 0 && window[n-1].Pending {
@@ -539,6 +552,8 @@ func (m *Manager) assemble(ctx context.Context, in PrepareIn, layers layer, even
 		TotalTokens:      st.TotalTokens,
 		TotalEstimate:    totalEst,
 		InputEstimate:    EstimateMessages(msgs),
+		SystemEstimate:   sysEst,
+		ToolsEstimate:    toolEst,
 		FactCount:        len(layers.facts),
 		SkillCount:       len(skills),
 		PendingEvicted:   ly.PendingEvicted,

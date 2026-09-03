@@ -1,5 +1,7 @@
 package ctxmgr
 
+import "encoding/json"
+
 // SourceRef 指向一条原始 event。
 type SourceRef struct {
 	RunID string `json:"run_id"`
@@ -58,6 +60,8 @@ type Applied struct {
 	TotalTokens      int            `json:"total_tokens"`
 	TotalEstimate    int            `json:"total_estimate"`
 	InputEstimate    int            `json:"estimated_input_tokens"`
+	SystemEstimate   int            `json:"system_estimate"`
+	ToolsEstimate    int            `json:"tools_estimate"`
 	FactCount        int            `json:"fact_count"`
 	SkillCount       int            `json:"skill_count"`
 	LargeSeq         int            `json:"large_seq,omitempty"`
@@ -79,9 +83,16 @@ type RetrievalHit struct {
 	Text  string `json:"text"`
 }
 
+// ToolSpec 只供预算估算，与 Worker 发送的工具条目对应；ctxmgr 不发 HTTP。
+type ToolSpec struct {
+	Name        string
+	Description string
+	Parameters  json.RawMessage
+}
+
 // Settings 是窗口与触发阈值（估算单位）。
 // TotalTokens 是硬上限；WindowTokens 是 raw recent 的 preferred max。
-// 实际 windowBudget = min(WindowTokens, max(0, Total-stable-dynamic))。
+// windowBudget = min(Window, max(0, Total-system-tools-stable-dynamic))。
 type Settings struct {
 	WindowTokens    int
 	TotalTokens     int
