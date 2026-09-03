@@ -10,7 +10,7 @@ import (
 
 func TestValidateResultAcceptsSignal(t *testing.T) {
 	raw := []byte(`{"summary":"用户要写 STATUS.md 并完成收集","facts":[{"key":"file","value":"STATUS.md","status":"active","confidence":0.9,"source_refs":[{"run_id":"r1","seq":1}]}],"open_items":["write file"],"decisions":[]}`)
-	got, err := ValidateResult(raw, []SourceRef{{RunID: "r1", Seq: 1}}, 200)
+	got, err := ValidateResult(raw, []SourceRef{{RunID: "r1", Seq: 1}}, 200, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,14 +20,14 @@ func TestValidateResultAcceptsSignal(t *testing.T) {
 }
 
 func TestValidateResultRejectsJSON(t *testing.T) {
-	if _, err := ValidateResult([]byte(`not json`), []SourceRef{{RunID: "r", Seq: 1}}, 100); err == nil {
+	if _, err := ValidateResult([]byte(`not json`), []SourceRef{{RunID: "r", Seq: 1}}, 100, 0); err == nil {
 		t.Fatal("expected json error")
 	}
 }
 
 func TestValidateResultRejectsEmpty(t *testing.T) {
 	raw := []byte(`{"summary":"Everything important is preserved.","facts":[],"open_items":[],"decisions":[]}`)
-	if _, err := ValidateResult(raw, []SourceRef{{RunID: "r", Seq: 1}}, 100); err == nil {
+	if _, err := ValidateResult(raw, []SourceRef{{RunID: "r", Seq: 1}}, 100, 0); err == nil {
 		t.Fatal("expected empty")
 	}
 }
@@ -35,27 +35,27 @@ func TestValidateResultRejectsEmpty(t *testing.T) {
 func TestProvenanceRunAndSeq(t *testing.T) {
 	ok := []byte(`{"summary":"保留了任务状态与文件约束足够长","facts":[{"key":"x","value":"y","status":"active","confidence":1,"source_refs":[{"run_id":"run-a","seq":12}]}],"open_items":[],"decisions":[]}`)
 	allowed := []SourceRef{{RunID: "run-a", Seq: 12}, {RunID: "run-b", Seq: 12}}
-	if _, err := ValidateResult(ok, allowed, 200); err != nil {
+	if _, err := ValidateResult(ok, allowed, 200, 0); err != nil {
 		t.Fatal(err)
 	}
 	wrongRun := []byte(`{"summary":"保留了任务状态与文件约束足够长","facts":[{"key":"x","value":"y","status":"active","confidence":1,"source_refs":[{"run_id":"run-b","seq":12}]}],"open_items":[],"decisions":[]}`)
-	if _, err := ValidateResult(wrongRun, []SourceRef{{RunID: "run-a", Seq: 12}}, 200); err == nil {
+	if _, err := ValidateResult(wrongRun, []SourceRef{{RunID: "run-a", Seq: 12}}, 200, 0); err == nil {
 		t.Fatal("wrong run_id")
 	}
 	unknownSeq := []byte(`{"summary":"保留了任务状态与文件约束足够长","facts":[{"key":"x","value":"y","status":"active","confidence":1,"source_refs":[{"run_id":"run-a","seq":99}]}],"open_items":[],"decisions":[]}`)
-	if _, err := ValidateResult(unknownSeq, []SourceRef{{RunID: "run-a", Seq: 12}}, 200); err == nil {
+	if _, err := ValidateResult(unknownSeq, []SourceRef{{RunID: "run-a", Seq: 12}}, 200, 0); err == nil {
 		t.Fatal("unknown seq")
 	}
 	unknownRun := []byte(`{"summary":"保留了任务状态与文件约束足够长","facts":[{"key":"x","value":"y","status":"active","confidence":1,"source_refs":[{"run_id":"nope","seq":12}]}],"open_items":[],"decisions":[]}`)
-	if _, err := ValidateResult(unknownRun, []SourceRef{{RunID: "run-a", Seq: 12}}, 200); err == nil {
+	if _, err := ValidateResult(unknownRun, []SourceRef{{RunID: "run-a", Seq: 12}}, 200, 0); err == nil {
 		t.Fatal("unknown run")
 	}
 	legacy := []byte(`{"summary":"保留了任务状态与文件约束足够长","facts":[{"key":"x","value":"y","status":"active","confidence":1,"source_event_seqs":[12]}],"open_items":[],"decisions":[]}`)
-	if _, err := ValidateResult(legacy, []SourceRef{{RunID: "run-a", Seq: 12}}, 200); err != nil {
+	if _, err := ValidateResult(legacy, []SourceRef{{RunID: "run-a", Seq: 12}}, 200, 0); err != nil {
 		t.Fatal("legacy same-run seq", err)
 	}
 	legacyCross := []byte(`{"summary":"保留了任务状态与文件约束足够长","facts":[{"key":"x","value":"y","status":"active","confidence":1,"source_event_seqs":[12]}],"open_items":[],"decisions":[]}`)
-	if _, err := ValidateResult(legacyCross, []SourceRef{{RunID: "run-a", Seq: 12}, {RunID: "run-b", Seq: 1}}, 200); err == nil {
+	if _, err := ValidateResult(legacyCross, []SourceRef{{RunID: "run-a", Seq: 12}, {RunID: "run-b", Seq: 1}}, 200, 0); err == nil {
 		t.Fatal("legacy seq across runs")
 	}
 }
@@ -68,7 +68,7 @@ func TestValidateResultRejectsOversized(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{
 		"summary": string(sum), "facts": []any{}, "open_items": []any{}, "decisions": []any{},
 	})
-	if _, err := ValidateResult(raw, []SourceRef{{RunID: "r", Seq: 1}}, 10); err == nil {
+	if _, err := ValidateResult(raw, []SourceRef{{RunID: "r", Seq: 1}}, 10, 0); err == nil {
 		t.Fatal("expected oversized")
 	}
 }
@@ -93,13 +93,13 @@ func TestSplitUnitsPendingAndOversized(t *testing.T) {
 		{Msg: map[string]any{"role": "assistant", "content": stringsRepeat("a", 200)}},
 		{Msg: map[string]any{"role": "tool", "content": stringsRepeat("b", 200)}},
 	}}
-	kept, _ := splitUnits([]contextUnit{huge}, 10)
-	if len(kept) != 1 || len(kept[0].Items) != 2 {
-		t.Fatalf("must keep whole tool unit kept=%d items=%d", len(kept), len(kept[0].Items))
+	kept, evicted := splitUnits([]contextUnit{huge}, 10)
+	if len(kept) != 0 || len(evicted) != 1 || len(evicted[0].Items) != 2 {
+		t.Fatalf("oversized non-pending tool must evict whole unit kept=%d evicted=%d", len(kept), len(evicted))
 	}
 	pend := contextUnit{Kind: "tool", Pending: true, Items: []windowItem{{Msg: map[string]any{"role": "assistant", "content": "call"}}}}
 	older := contextUnit{Kind: "normal", Items: []windowItem{{Msg: map[string]any{"role": "user", "content": stringsRepeat("z", 80)}}}}
-	kept, evicted := splitUnits([]contextUnit{older, pend}, pend.tokens())
+	kept, evicted = splitUnits([]contextUnit{older, pend}, pend.tokens())
 	if len(kept) == 0 || !kept[len(kept)-1].Pending {
 		t.Fatal("pending dropped")
 	}

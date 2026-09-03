@@ -190,13 +190,17 @@ func NewMux(deps Deps) *gin.Engine {
 				c.JSON(http.StatusNotFound, gin.H{"error": "no_context"})
 				return
 			}
-			c.JSON(http.StatusOK, gin.H{
+			out := gin.H{
 				"kind":     "context",
 				"source":   src,
 				"applied":  asm.Applied,
 				"layers":   asm.Layers,
 				"messages": asm.Messages,
-			})
+			}
+			if src == "reconstructable" {
+				out["reconstructable_note"] = "not a byte-for-byte prompt replay; prompt body is not snapshotted"
+			}
+			c.JSON(http.StatusOK, out)
 		})
 		v1.GET("/runs/:id/events/:seq", func(c *gin.Context) {
 			seq, err := strconv.Atoi(c.Param("seq"))

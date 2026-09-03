@@ -10,6 +10,7 @@ import (
 	"desk/internal/ctxmgr"
 	"desk/internal/event"
 	"desk/internal/ids"
+	"desk/internal/prompt"
 	"desk/internal/testdb"
 	"desk/internal/worker"
 )
@@ -28,6 +29,7 @@ func TestContextRebuildReplacesWorkerMessages(t *testing.T) {
 	ok := []byte(`{"summary":"保留当前工具推进状态","facts":[{"key":"step","value":"ping","status":"active","confidence":0.9,"source_event_seqs":[1]}],"open_items":[],"decisions":["continue"]}`)
 	cm := ctxmgr.New(svc.Events, svc.Index, ctxmgr.Settings{
 		WindowTokens:    20,
+		TotalTokens:     1_000_000,
 		SmallTriggerTok: 1,
 		LargeSmallCount: 99,
 		PromptsDir:      filepath.Join(repoRoot(t), "prompts"),
@@ -103,22 +105,20 @@ func TestRetrievalBoundedAndEmpty(t *testing.T) {
 
 func TestReplaceFailDoesNotWriteApplied(t *testing.T) {
 	inner := &recWorker{fn: func(in worker.In) *worker.Out {
-		if in.T == "turn.start" {
-			return &worker.Out{T: "tool.request", ID: "call-1", Name: "ping.ok", Args: map[string]any{}}
-		}
 		return &worker.Out{T: "turn.finish", Text: "ok"}
 	}}
 	w := &failReplaceWorker{inner: inner}
 	work := t.TempDir()
 	svc, db := contractEnv(t, w, work)
-	ok := []byte(`{"summary":"保留当前工具推进状态足够长","facts":[{"key":"step","value":"ping","status":"active","confidence":0.9,"source_event_seqs":[1]}],"open_items":[],"decisions":["continue"]}`)
+	okJSON := []byte(`{"summary":"保留当前工具推进状态足够长","facts":[{"key":"step","value":"ping","status":"active","confidence":0.9,"source_event_seqs":[1]}],"open_items":[],"decisions":["continue"]}`)
 	cm := ctxmgr.New(svc.Events, svc.Index, ctxmgr.Settings{
 		WindowTokens:    20,
+		TotalTokens:     1_000_000,
 		SmallTriggerTok: 1,
 		LargeSmallCount: 99,
 		PromptsDir:      filepath.Join(repoRoot(t), "prompts"),
 	})
-	cm.Compactor = &ctxmgr.StubCompactor{Raw: ok}
+	cm.Compactor = &ctxmgr.StubCompactor{Raw: okJSON}
 	svc.Context = cm
 	sess := testdb.InsertSession(t, db)
 	runID := ids.New()
@@ -135,7 +135,13 @@ func TestReplaceFailDoesNotWriteApplied(t *testing.T) {
 		}
 		_ = tx.Commit()
 	}
-	err := svc.Drive(context.Background(), runID)
+	snapshot, err := prompt.Load(svc.PromptsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.ask(context.Background(), runID, sess, work, snapshot, worker.In{
+		T: "tool.result", ID: "call-1", Phase: "act", OK: true,
+	})
 	if err == nil {
 		t.Fatal("expected replace failure")
 	}
@@ -149,8 +155,8 @@ func TestReplaceFailDoesNotWriteApplied(t *testing.T) {
 	if smalls < 1 {
 		t.Fatal("compact should have committed before replace")
 	}
-	if applied != 1 {
-		t.Fatalf("applied=%d want 1 (turn.start only; replace must not write)", applied)
+	if applied != 0 {
+		t.Fatalf("applied=%d want 0 after replace fail", applied)
 	}
 	if w.replaces == 0 {
 		t.Fatal("expected context.replace attempt")

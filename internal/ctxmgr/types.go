@@ -35,21 +35,39 @@ type CompactPayload struct {
 	Absorbs   []SourceRef `json:"absorbs,omitempty"`
 }
 
-// Applied 是一次 LLM Call 的可审查元数据。
+// EvictPayload 是 durable Active Window 边界：这些源事件不再作为 raw window。
+type EvictPayload struct {
+	BasedOn []SourceRef `json:"based_on"`
+}
+
+// CompactFailPayload 记录 compact LLM/校验失败，避免同一批每 Call 重试。
+type CompactFailPayload struct {
+	Kind    string      `json:"kind"`
+	BasedOn []SourceRef `json:"based_on"`
+	Error   string      `json:"error"`
+}
+
+// Applied 是「Worker 已成功采用」的 Context 元数据，不是 Prepare 成功。
+// PromptHash 不能还原 prompt 正文；reconstructable 不是 byte-for-byte replay。
 type Applied struct {
 	Version          int            `json:"version"`
 	PromptHash       string         `json:"prompt_hash"`
 	WindowTokens     int            `json:"window_tokens"`
+	WindowBudget     int            `json:"window_budget"`
 	WindowEstimate   int            `json:"window_estimate"`
 	TotalTokens      int            `json:"total_tokens"`
 	TotalEstimate    int            `json:"total_estimate"`
 	InputEstimate    int            `json:"estimated_input_tokens"`
+	FactCount        int            `json:"fact_count"`
+	SkillCount       int            `json:"skill_count"`
 	LargeSeq         int            `json:"large_seq,omitempty"`
 	LargeRunID       string         `json:"large_run_id,omitempty"`
 	SmallRefs        []SourceRef    `json:"small_refs,omitempty"`
+	PendingEvicted   []SourceRef    `json:"pending_evicted,omitempty"`
 	Retrieval        []RetrievalHit `json:"retrieval,omitempty"`
 	RebuildReason    string         `json:"rebuild_reason,omitempty"`
 	CompactionReason string         `json:"compaction_reason,omitempty"`
+	OverBudget       string         `json:"over_budget,omitempty"`
 	SkipRuntime      bool           `json:"skip_runtime,omitempty"`
 }
 
@@ -62,6 +80,8 @@ type RetrievalHit struct {
 }
 
 // Settings 是窗口与触发阈值（估算单位）。
+// TotalTokens 是硬上限；WindowTokens 是 raw recent 的 preferred max。
+// 实际 windowBudget = min(WindowTokens, max(0, Total-stable-dynamic))。
 type Settings struct {
 	WindowTokens    int
 	TotalTokens     int

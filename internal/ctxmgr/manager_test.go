@@ -30,6 +30,7 @@ func testMgr(t *testing.T, window int, stub *StubCompactor) (*Manager, *event.St
 	root, _ := filepath.Abs("../..")
 	m := New(ev, idx, Settings{
 		WindowTokens:    window,
+		TotalTokens:     1_000_000,
 		SmallTriggerTok: 1,
 		LargeTriggerTok: 50,
 		LargeSmallCount: 2,

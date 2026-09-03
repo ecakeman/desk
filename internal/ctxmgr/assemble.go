@@ -106,9 +106,146 @@ func skipSet(events []event.Event) map[string]map[int]bool {
 			for _, r := range p.Absorbs {
 				add(r.RunID, r.Seq)
 			}
+		case event.TypeContextEvicted:
+			var p EvictPayload
+			if json.Unmarshal(e.Payload, &p) != nil {
+				continue
+			}
+			for _, r := range p.BasedOn {
+				add(r.RunID, r.Seq)
+			}
 		}
 	}
 	return skip
+}
+
+func skipCompacted(events []event.Event) map[string]map[int]bool {
+	skip := map[string]map[int]bool{}
+	add := func(run string, seq int) {
+		if skip[run] == nil {
+			skip[run] = map[int]bool{}
+		}
+		skip[run][seq] = true
+	}
+	for _, e := range events {
+		switch e.Type {
+		case event.TypeEpisodeCompacted:
+			var p struct {
+				BasedOn []int `json:"based_on"`
+			}
+			if json.Unmarshal(e.Payload, &p) != nil {
+				continue
+			}
+			for _, seq := range p.BasedOn {
+				add(e.RunID, seq)
+			}
+		case event.TypeContextSmallCompact, event.TypeContextLargeCompact:
+			var p CompactPayload
+			if json.Unmarshal(e.Payload, &p) != nil {
+				continue
+			}
+			for _, r := range p.BasedOn {
+				add(r.RunID, r.Seq)
+			}
+			for _, r := range p.Absorbs {
+				add(r.RunID, r.Seq)
+			}
+		}
+	}
+	return skip
+}
+
+func pendingEvictedRefs(events []event.Event) []SourceRef {
+	done := map[string]bool{}
+	for _, e := range events {
+		if e.Type != event.TypeContextSmallCompact {
+			continue
+		}
+		var p CompactPayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			continue
+		}
+		for _, r := range p.BasedOn {
+			done[sourceKey(r)] = true
+		}
+	}
+	seen := map[string]bool{}
+	var out []SourceRef
+	for _, e := range events {
+		if e.Type != event.TypeContextEvicted {
+			continue
+		}
+		var p EvictPayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			continue
+		}
+		for _, r := range p.BasedOn {
+			k := sourceKey(r)
+			if done[k] || seen[k] {
+				continue
+			}
+			seen[k] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func unitRefs(units []contextUnit) []SourceRef {
+	seen := map[string]bool{}
+	var out []SourceRef
+	for _, u := range units {
+		for _, it := range u.Items {
+			k := sourceKey(it.Ref)
+			if it.Ref.RunID == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			out = append(out, it.Ref)
+		}
+	}
+	return out
+}
+
+func stableMsgs(layers layer, withFacts bool) []map[string]any {
+	var stable []map[string]any
+	if layers.large != nil {
+		stable = append(stable, compactBlock("LARGE", *layers.large))
+	}
+	for _, s := range layers.smalls {
+		stable = append(stable, compactBlock("SMALL", s))
+	}
+	if withFacts {
+		if fb := factsBlock(layers.facts); fb != nil {
+			stable = append(stable, fb)
+		}
+	}
+	return stable
+}
+
+func blockedByFail(events []event.Event, kind string) bool {
+	lastFail, lastKick := -1, -1
+	for i, e := range events {
+		switch e.Type {
+		case event.TypeContextEvicted:
+			if kind == "small" {
+				lastKick = i
+			}
+		case event.TypeContextSmallCompact:
+			if kind == "large" {
+				lastKick = i
+			}
+		case event.TypeContextCompactFailed:
+			var p CompactFailPayload
+			if json.Unmarshal(e.Payload, &p) != nil {
+				continue
+			}
+			if p.Kind == kind {
+				lastFail = i
+			}
+		}
+	}
+	return lastFail >= 0 && lastFail >= lastKick
 }
 
 func skipped(skip map[string]map[int]bool, runID string, seq int) bool {
@@ -136,6 +273,9 @@ func buildUnits(events []event.Event, currentRun, pendingToolID string, skip map
 	}
 	for _, e := range events {
 		if e.Type == event.TypeContextSmallCompact || e.Type == event.TypeContextLargeCompact {
+			continue
+		}
+		if skipped(skip, e.RunID, e.Seq) {
 			continue
 		}
 		switch e.Type {

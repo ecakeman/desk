@@ -178,7 +178,7 @@ func reviewSummary(out *worker.Out) string {
 	return summary
 }
 
-// InspectContext 进程内 assembled，否则从 context.applied 重建。
+// InspectContext 进程内 assembled，否则从 context.applied 重建（非 byte replay）。
 func (s *Service) InspectContext(ctx context.Context, sessionID, runID string) (ctxmgr.Assembly, string, bool) {
 	return s.contextMgr().Inspect(ctx, sessionID, runID)
 }

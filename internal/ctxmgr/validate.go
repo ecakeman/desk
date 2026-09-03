@@ -78,7 +78,7 @@ func factRefs(f Fact, allowed []SourceRef) []SourceRef {
 }
 
 // ValidateResult 校验 compact JSON：schema、provenance=(run_id,seq)、非空、体积。
-func ValidateResult(raw []byte, allowed []SourceRef, inputTokens int) (Result, error) {
+func ValidateResult(raw []byte, allowed []SourceRef, inputTokens, maxOut int) (Result, error) {
 	var out Result
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return Result{}, fmt.Errorf("compact_json: %w", err)
@@ -134,6 +134,9 @@ func ValidateResult(raw []byte, allowed []SourceRef, inputTokens int) (Result, e
 		return Result{}, fmt.Errorf("compact_oversized")
 	}
 	if utf8.RuneCountInString(sum) > 2000 {
+		return Result{}, fmt.Errorf("compact_oversized")
+	}
+	if maxOut > 0 && outTokens > maxOut {
 		return Result{}, fmt.Errorf("compact_oversized")
 	}
 	out.Summary = sum

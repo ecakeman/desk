@@ -85,6 +85,7 @@ func Load() Config {
 			APIKey:  getenv("DESK_FLASH_API_KEY", getenv("DESK_MODEL_API_KEY", "")),
 			Model:   getenv("DESK_FLASH_MODEL", getenv("DESK_MODEL_MODEL", "")),
 		}),
+		// Total 硬上限；Window 是 raw recent 的 preferred max（实际窗口取 min(Window, Total-stable-dynamic)）。
 		WindowTokens:    getenvInt("DESK_CTX_WINDOW_TOKENS", 4000),
 		TotalTokens:     getenvInt("DESK_CTX_TOTAL_TOKENS", 12000),
 		SmallTriggerTok: getenvInt("DESK_CTX_SMALL_TRIGGER_TOKENS", 400),
