@@ -5,13 +5,14 @@
 
 必须输出且只输出一个 JSON 对象，字段为：
 - summary: 字符串，当前任务仍需要知道的状态
-- facts: 对象数组，每项含 key, value, status, confidence, source_event_seqs
+- facts: 对象数组，每项含 key, value, status, confidence, source_refs
 - open_items: 字符串数组，未完成事项
 - decisions: 字符串数组，已完成的重要决策
 
 status 只能是 active、superseded 或 dropped。
 confidence 是 0 到 1 的数字。
-source_event_seqs 必须全部来自用户 JSON 里提供的 allowed_seqs，禁止虚构序号。
+source_refs 必须是对象数组，每项含 run_id 与 seq，且必须全部来自用户 JSON 里的 allowed_sources，禁止虚构。
+不要使用单独的序号。
 
 不要复述对话。
 不要创造历史中不存在的信息。

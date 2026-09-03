@@ -185,13 +185,14 @@ func NewMux(deps Deps) *gin.Engine {
 				writeError(c, err)
 				return
 			}
-			asm, ok := deps.Messages.InspectContext(item.ID)
+			asm, src, ok := deps.Messages.InspectContext(c.Request.Context(), item.SessionID, item.ID)
 			if !ok {
 				c.JSON(http.StatusNotFound, gin.H{"error": "no_context"})
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{
-				"kind":     "assembled",
+				"kind":     "context",
+				"source":   src,
 				"applied":  asm.Applied,
 				"layers":   asm.Layers,
 				"messages": asm.Messages,

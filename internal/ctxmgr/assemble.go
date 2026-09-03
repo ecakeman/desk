@@ -12,13 +12,46 @@ import (
 type layer struct {
 	large  *event.Event
 	smalls []event.Event
-	window []windowItem
+	window []contextUnit
 	facts  []Fact
 }
 
 type windowItem struct {
 	Ref SourceRef
 	Msg map[string]any
+}
+
+// contextUnit 是 eviction 粒度：普通消息一条一单位；tool_call+result 不可拆。
+type contextUnit struct {
+	Kind    string // normal | tool
+	Pending bool
+	Items   []windowItem
+}
+
+func (u contextUnit) tokens() int {
+	n := 0
+	for _, it := range u.Items {
+		n += EstimateTokens(messageText(it.Msg))
+	}
+	return n
+}
+
+func flattenUnits(units []contextUnit) []windowItem {
+	var out []windowItem
+	for _, u := range units {
+		out = append(out, u.Items...)
+	}
+	return out
+}
+
+func unitMsgs(units []contextUnit) []map[string]any {
+	var out []map[string]any
+	for _, u := range units {
+		for _, it := range u.Items {
+			out = append(out, it.Msg)
+		}
+	}
+	return out
 }
 
 func parseLayers(events []event.Event, currentRun, pendingToolID string) layer {
@@ -38,7 +71,7 @@ func parseLayers(events []event.Event, currentRun, pendingToolID string) layer {
 	}
 	out := layer{large: large, smalls: allSmall}
 	out.facts = mergeFacts(large, allSmall)
-	out.window = buildWindow(events, currentRun, pendingToolID, skip)
+	out.window = buildUnits(events, currentRun, pendingToolID, skip)
 	return out
 }
 
@@ -82,8 +115,8 @@ func skipped(skip map[string]map[int]bool, runID string, seq int) bool {
 	return skip[runID][seq]
 }
 
-func buildWindow(events []event.Event, currentRun, pendingToolID string, skip map[string]map[int]bool) []windowItem {
-	var out []windowItem
+func buildUnits(events []event.Event, currentRun, pendingToolID string, skip map[string]map[int]bool) []contextUnit {
+	var out []contextUnit
 	type req struct {
 		id   string
 		name string
@@ -92,6 +125,15 @@ func buildWindow(events []event.Event, currentRun, pendingToolID string, skip ma
 		run  string
 	}
 	pending := map[string]req{}
+	normal := func(e event.Event, msg map[string]any) {
+		out = append(out, contextUnit{
+			Kind: "normal",
+			Items: []windowItem{{
+				Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
+				Msg: msg,
+			}},
+		})
+	}
 	for _, e := range events {
 		if e.Type == event.TypeContextSmallCompact || e.Type == event.TypeContextLargeCompact {
 			continue
@@ -104,10 +146,7 @@ func buildWindow(events []event.Event, currentRun, pendingToolID string, skip ma
 			if json.Unmarshal(e.Payload, &p) != nil {
 				continue
 			}
-			out = append(out, windowItem{
-				Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
-				Msg: map[string]any{"role": "user", "content": event.Redact(p.Text)},
-			})
+			normal(e, map[string]any{"role": "user", "content": event.Redact(p.Text)})
 		case event.TypeMessageCompleted:
 			var p struct {
 				Text string `json:"text"`
@@ -115,10 +154,7 @@ func buildWindow(events []event.Event, currentRun, pendingToolID string, skip ma
 			if json.Unmarshal(e.Payload, &p) != nil {
 				continue
 			}
-			out = append(out, windowItem{
-				Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
-				Msg: map[string]any{"role": "assistant", "content": event.Redact(p.Text)},
-			})
+			normal(e, map[string]any{"role": "assistant", "content": event.Redact(p.Text)})
 		case event.TypeTaskUpdated:
 			var p struct {
 				ID, Status, Title string
@@ -130,12 +166,9 @@ func buildWindow(events []event.Event, currentRun, pendingToolID string, skip ma
 			if p.ID != "" {
 				line = "task " + p.ID + " " + p.Status + " " + p.Title
 			}
-			out = append(out, windowItem{
-				Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
-				Msg: map[string]any{
-					"role":    "user",
-					"content": event.Redact("[CONTEXT: TASK]\n" + line + "\n[/CONTEXT]"),
-				},
+			normal(e, map[string]any{
+				"role":    "user",
+				"content": event.Redact("[CONTEXT: TASK]\n" + line + "\n[/CONTEXT]"),
 			})
 		case event.TypeEpisodeCompacted:
 			var p struct {
@@ -144,14 +177,11 @@ func buildWindow(events []event.Event, currentRun, pendingToolID string, skip ma
 			if json.Unmarshal(e.Payload, &p) != nil {
 				continue
 			}
-			out = append(out, windowItem{
-				Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
-				Msg: map[string]any{
-					"role": "user",
-					"content": event.Redact(
-						fmt.Sprintf("[event episode.compacted %s:%d]\n%s", e.RunID, e.Seq, p.Text),
-					),
-				},
+			normal(e, map[string]any{
+				"role": "user",
+				"content": event.Redact(
+					fmt.Sprintf("[event episode.compacted %s:%d]\n%s", e.RunID, e.Seq, p.Text),
+				),
 			})
 		case event.TypeToolRequested:
 			if e.RunID != currentRun {
@@ -172,38 +202,39 @@ func buildWindow(events []event.Event, currentRun, pendingToolID string, skip ma
 					Data json.RawMessage `json:"data"`
 				}
 				_ = json.Unmarshal(e.Payload, &p)
-				out = append(out, windowItem{
-					Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
-					Msg: map[string]any{
-						"role": "user",
-						"content": event.Redact(
-							fmt.Sprintf("[event tool.completed %s:%d]\n%s", e.RunID, e.Seq, string(p.Data)),
-						),
-					},
+				normal(e, map[string]any{
+					"role": "user",
+					"content": event.Redact(
+						fmt.Sprintf("[event tool.completed %s:%d]\n%s", e.RunID, e.Seq, string(p.Data)),
+					),
 				})
 				continue
 			}
 			r := pending[id]
-			asst := assistantTool(r.id, r.name, r.args)
-			out = append(out, windowItem{Ref: SourceRef{RunID: r.run, Seq: r.seq}, Msg: asst})
+			asst := windowItem{Ref: SourceRef{RunID: r.run, Seq: r.seq}, Msg: assistantTool(r.id, r.name, r.args)}
 			if id == pendingToolID {
+				out = append(out, contextUnit{Kind: "tool", Pending: true, Items: []windowItem{asst}})
 				delete(pending, id)
 				continue
 			}
-			content := toolBody(e)
-			out = append(out, windowItem{
+			res := windowItem{
 				Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
-				Msg: map[string]any{"role": "tool", "tool_call_id": id, "content": content},
-			})
+				Msg: map[string]any{"role": "tool", "tool_call_id": id, "content": toolBody(e)},
+			}
+			out = append(out, contextUnit{Kind: "tool", Items: []windowItem{asst, res}})
 			delete(pending, id)
 			_ = name
 		}
 	}
 	if pendingToolID != "" {
 		if r, ok := pending[pendingToolID]; ok {
-			out = append(out, windowItem{
-				Ref: SourceRef{RunID: r.run, Seq: r.seq},
-				Msg: assistantTool(r.id, r.name, r.args),
+			out = append(out, contextUnit{
+				Kind:    "tool",
+				Pending: true,
+				Items: []windowItem{{
+					Ref: SourceRef{RunID: r.run, Seq: r.seq},
+					Msg: assistantTool(r.id, r.name, r.args),
+				}},
 			})
 		}
 	}
@@ -351,7 +382,8 @@ func retrievalBlock(hits []RetrievalHit) map[string]any {
 	return map[string]any{"role": "user", "content": event.Redact(b.String())}
 }
 
-func evictedJSON(items []windowItem) (user string, refs []SourceRef, tokens int) {
+func evictedJSON(units []contextUnit) (user string, refs []SourceRef, tokens int) {
+	items := flattenUnits(units)
 	type row struct {
 		RunID   string         `json:"run_id"`
 		Seq     int            `json:"seq"`
@@ -363,13 +395,9 @@ func evictedJSON(items []windowItem) (user string, refs []SourceRef, tokens int)
 		rows = append(rows, row{RunID: it.Ref.RunID, Seq: it.Ref.Seq, Message: it.Msg})
 		tokens += EstimateTokens(messageText(it.Msg))
 	}
-	allowed := make([]int, 0, len(refs))
-	for _, r := range refs {
-		allowed = append(allowed, r.Seq)
-	}
 	raw, _ := json.Marshal(map[string]any{
-		"allowed_seqs": allowed,
-		"evicted":      rows,
+		"allowed_sources": refs,
+		"evicted":         rows,
 	})
 	return string(raw), refs, tokens
 }

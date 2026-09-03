@@ -109,7 +109,7 @@ func (s *StubCompactor) Compact(_ context.Context, _, _, user string) ([]byte, e
 	}
 	raw := s.Raw
 	var in struct {
-		Allowed []int `json:"allowed_seqs"`
+		Allowed []SourceRef `json:"allowed_sources"`
 	}
 	_ = json.Unmarshal([]byte(user), &in)
 	if len(in.Allowed) > 0 && len(raw) > 0 {
@@ -117,7 +117,8 @@ func (s *StubCompactor) Compact(_ context.Context, _, _, user string) ([]byte, e
 		if json.Unmarshal(raw, &obj) == nil {
 			if facts, ok := obj["facts"].([]any); ok && len(facts) > 0 {
 				if f, ok := facts[0].(map[string]any); ok {
-					f["source_event_seqs"] = []int{in.Allowed[0]}
+					f["source_refs"] = []SourceRef{in.Allowed[0]}
+					delete(f, "source_event_seqs")
 				}
 			}
 			if b, err := json.Marshal(obj); err == nil {

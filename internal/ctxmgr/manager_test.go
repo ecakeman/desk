@@ -3,6 +3,7 @@ package ctxmgr
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"desk/internal/event"
 	"desk/internal/ids"
 	"desk/internal/memory"
+	"desk/internal/skill"
 	"desk/internal/testdb"
 )
 
@@ -194,6 +196,128 @@ func TestAssembleStablePrefixThenRetrieval(t *testing.T) {
 		if string(b1) != string(b2) {
 			t.Fatalf("prefix drift at %d", i)
 		}
+	}
+}
+
+func TestTotalBudgetBoundsEstimate(t *testing.T) {
+	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m.Settings.TotalTokens = 70
+	m.Settings.SmallTriggerTok = 1_000_000
+	for i := 0; i < 12; i++ {
+		appendUser(t, ev, runID, strings.Repeat("budget-user-", 8)+ids.New())
+	}
+	hits := []RetrievalHit{{
+		RunID: runID, Seq: 1, Kind: event.TypeMessageUser,
+		Text: strings.Repeat("retrieval-padding ", 40),
+	}}
+	asm, err := m.Prepare(context.Background(), PrepareIn{
+		SessionID: sess, RunID: runID, FrozenHits: hits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := EstimateMessages(asm.Messages)
+	if got > m.Settings.TotalTokens {
+		t.Fatalf("estimate %d > total %d", got, m.Settings.TotalTokens)
+	}
+	if len(asm.Applied.Retrieval) != 0 {
+		t.Fatal("retrieval should be dropped under total")
+	}
+	if !asm.Rebuild {
+		t.Fatal("total trim should rebuild")
+	}
+}
+
+func TestSkillAfterWindowStablePrefix(t *testing.T) {
+	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	work := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(work, "memory", "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := "# ping\nbudget ping skill unique-token-xyz for retrieval"
+	rel := "memory/skills/ping.md"
+	if err := os.WriteFile(filepath.Join(work, filepath.FromSlash(rel)), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	rev, ok := skill.NewRevision(rel, body, 0)
+	if !ok {
+		t.Fatal("revision")
+	}
+	ctx := context.Background()
+	tx, err := ev.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ev.Append(ctx, tx, runID, event.TypeSkillRevised, rev); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	appendUser(t, ev, runID, "please follow unique-token-xyz ping skill")
+	a1, err := m.Prepare(ctx, PrepareIn{SessionID: sess, RunID: runID, Workspace: work})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a1.Layers.Skill) == 0 {
+		t.Fatal("missing skill layer")
+	}
+	prefix := len(a1.Layers.Large) + len(a1.Layers.Smalls) + len(a1.Layers.Facts) + len(a1.Layers.Window)
+	if prefix == 0 || prefix > len(a1.Messages) {
+		t.Fatalf("prefix=%d len=%d", prefix, len(a1.Messages))
+	}
+	skillStart := prefix
+	if skillStart >= len(a1.Messages) {
+		t.Fatal("skill not after window")
+	}
+	if !strings.Contains(fmtString(a1.Messages[skillStart]["content"]), "[CONTEXT: SKILL]") {
+		t.Fatalf("expected skill after window: %#v", a1.Messages[skillStart])
+	}
+	hits := []RetrievalHit{{RunID: runID, Seq: 1, Kind: event.TypeMessageUser, Text: "tail-only-memory"}}
+	a2, err := m.Prepare(ctx, PrepareIn{
+		SessionID: sess, RunID: runID, Workspace: work, FrozenHits: hits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < prefix; i++ {
+		b1, _ := json.Marshal(a1.Messages[i])
+		b2, _ := json.Marshal(a2.Messages[i])
+		if string(b1) != string(b2) {
+			t.Fatalf("window prefix drift at %d", i)
+		}
+	}
+	if len(a2.Layers.Retrieval) == 0 {
+		t.Fatal("expected retrieval tail")
+	}
+}
+
+func TestInspectReconstructableAfterForget(t *testing.T) {
+	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	appendUser(t, ev, runID, "durable inspect")
+	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	tx, err := ev.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ev.Append(ctx, tx, runID, event.TypeContextApplied, asm.Applied); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	got, src, ok := m.Inspect(ctx, sess, runID)
+	if !ok || src != "assembled" || len(got.Messages) == 0 {
+		t.Fatalf("assembled src=%s ok=%v", src, ok)
+	}
+	m.Forget(runID)
+	got, src, ok = m.Inspect(ctx, sess, runID)
+	if !ok || src != "reconstructable" || len(got.Messages) == 0 {
+		t.Fatalf("reconstructable src=%s ok=%v", src, ok)
 	}
 }
 

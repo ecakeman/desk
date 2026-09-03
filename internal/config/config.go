@@ -33,6 +33,7 @@ type Config struct {
 	RerankTimeoutMS int
 	Compact         ModelConfig
 	WindowTokens    int
+	TotalTokens     int
 	SmallTriggerTok int
 	LargeTriggerTok int
 	LargeSmallCount int
@@ -85,6 +86,7 @@ func Load() Config {
 			Model:   getenv("DESK_FLASH_MODEL", getenv("DESK_MODEL_MODEL", "")),
 		}),
 		WindowTokens:    getenvInt("DESK_CTX_WINDOW_TOKENS", 4000),
+		TotalTokens:     getenvInt("DESK_CTX_TOTAL_TOKENS", 12000),
 		SmallTriggerTok: getenvInt("DESK_CTX_SMALL_TRIGGER_TOKENS", 400),
 		LargeTriggerTok: getenvInt("DESK_CTX_LARGE_TRIGGER_TOKENS", 1200),
 		LargeSmallCount: getenvInt("DESK_CTX_LARGE_SMALL_COUNT", 3),

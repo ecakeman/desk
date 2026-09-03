@@ -108,6 +108,7 @@ func runServe(cfg config.Config) error {
 	svc.PromptsDir = cfg.PromptsDir
 	svc.Context = ctxmgr.New(ev, idx, ctxmgr.Settings{
 		WindowTokens:    cfg.WindowTokens,
+		TotalTokens:     cfg.TotalTokens,
 		SmallTriggerTok: cfg.SmallTriggerTok,
 		LargeTriggerTok: cfg.LargeTriggerTok,
 		LargeSmallCount: cfg.LargeSmallCount,

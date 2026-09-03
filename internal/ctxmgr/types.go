@@ -8,11 +8,13 @@ type SourceRef struct {
 
 // Fact 是 compact 派生的结构化事实，不是 Event Store 真相。
 type Fact struct {
-	Key             string  `json:"key"`
-	Value           string  `json:"value"`
-	Status          string  `json:"status"`
-	Confidence      float64 `json:"confidence"`
-	SourceEventSeqs []int   `json:"source_event_seqs"`
+	Key        string      `json:"key"`
+	Value      string      `json:"value"`
+	Status     string      `json:"status"`
+	Confidence float64     `json:"confidence"`
+	SourceRefs []SourceRef `json:"source_refs,omitempty"`
+	// SourceEventSeqs 仅兼容旧测例；校验时只有全部 allowed 同 run 才接受。
+	SourceEventSeqs []int `json:"source_event_seqs,omitempty"`
 }
 
 // Result 是 Small/Large Compact 的可解析输出。
@@ -39,6 +41,8 @@ type Applied struct {
 	PromptHash       string         `json:"prompt_hash"`
 	WindowTokens     int            `json:"window_tokens"`
 	WindowEstimate   int            `json:"window_estimate"`
+	TotalTokens      int            `json:"total_tokens"`
+	TotalEstimate    int            `json:"total_estimate"`
 	InputEstimate    int            `json:"estimated_input_tokens"`
 	LargeSeq         int            `json:"large_seq,omitempty"`
 	LargeRunID       string         `json:"large_run_id,omitempty"`
@@ -60,6 +64,7 @@ type RetrievalHit struct {
 // Settings 是窗口与触发阈值（估算单位）。
 type Settings struct {
 	WindowTokens    int
+	TotalTokens     int
 	SmallTriggerTok int
 	LargeTriggerTok int
 	LargeSmallCount int
@@ -71,6 +76,9 @@ func (s Settings) withDefaults() Settings {
 	out := s
 	if out.WindowTokens <= 0 {
 		out.WindowTokens = 4000
+	}
+	if out.TotalTokens <= 0 {
+		out.TotalTokens = out.WindowTokens * 3
 	}
 	if out.SmallTriggerTok <= 0 {
 		out.SmallTriggerTok = 400

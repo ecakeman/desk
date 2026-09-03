@@ -7,13 +7,13 @@
 
 必须输出且只输出一个 JSON 对象，字段为：
 - summary: 字符串，合并后的长期状态
-- facts: 对象数组，每项含 key, value, status, confidence, source_event_seqs
+- facts: 对象数组，每项含 key, value, status, confidence, source_refs
 - open_items: 字符串数组
 - decisions: 字符串数组
 
 status 只能是 active、superseded 或 dropped。
 confidence 是 0 到 1 的数字。
-source_event_seqs 必须全部来自用户 JSON 里提供的 allowed_seqs。
+source_refs 必须全部来自用户 JSON 里提供的 allowed_sources（run_id + seq）。
 
 必须：合并重复事实、更新已变化事实、淘汰已失效事实、保留仍然有效事实、区分事实与推断、保留未完成任务、保留长期约束、避免历史堆积。
 

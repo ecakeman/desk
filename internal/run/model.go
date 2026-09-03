@@ -39,6 +39,7 @@ func (s *Service) contextMgr() *ctxmgr.Manager {
 	if s.Context == nil {
 		s.Context = ctxmgr.New(s.Events, s.Index, ctxmgr.Settings{
 			WindowTokens: 1_000_000,
+			TotalTokens:  3_000_000,
 			PromptsDir:   s.PromptsDir,
 		})
 	}
@@ -177,7 +178,7 @@ func reviewSummary(out *worker.Out) string {
 	return summary
 }
 
-// InspectContext 返回最近一次组装的分层 Context，供 /context。
-func (s *Service) InspectContext(runID string) (ctxmgr.Assembly, bool) {
-	return s.contextMgr().Last(runID)
+// InspectContext 进程内 assembled，否则从 context.applied 重建。
+func (s *Service) InspectContext(ctx context.Context, sessionID, runID string) (ctxmgr.Assembly, string, bool) {
+	return s.contextMgr().Inspect(ctx, sessionID, runID)
 }

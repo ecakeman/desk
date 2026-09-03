@@ -161,11 +161,15 @@ func TestRuntimeContractHTTPLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	var assembled struct {
-		Kind string `json:"kind"`
+		Kind   string `json:"kind"`
+		Source string `json:"source"`
 	}
 	decodeJSON(t, ctxResp, &assembled)
-	if assembled.Kind != "assembled" {
+	if assembled.Kind != "context" {
 		t.Fatalf("context kind=%q", assembled.Kind)
+	}
+	if assembled.Source != "assembled" {
+		t.Fatalf("context source=%q", assembled.Source)
 	}
 	stmResp, err := http.Get(srv.URL + "/v1/runs/" + created.RunID + "/stm")
 	if err != nil {
