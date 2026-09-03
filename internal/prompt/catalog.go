@@ -23,6 +23,7 @@ type Snapshot struct {
 }
 
 // Load 读 base、phases、tools/*.md；缺文件失败。
+// compact/ 不参与 hash，避免压缩 prompt 改动对话 Snapshot。
 func Load(dir string) (*Snapshot, error) {
 	snapshot := &Snapshot{
 		phases: make(map[string]string),

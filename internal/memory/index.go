@@ -470,6 +470,37 @@ func extract(typ string, raw json.RawMessage) (string, bool) {
 			s = string([]rune(s)[:500])
 		}
 		return s, s != ""
+	case event.TypeContextSmallCompact, event.TypeContextLargeCompact:
+		var p struct {
+			Summary string `json:"summary"`
+			Facts   []struct {
+				Key   string `json:"key"`
+				Value string `json:"value"`
+			} `json:"facts"`
+			OpenItems []string `json:"open_items"`
+			Decisions []string `json:"decisions"`
+		}
+		if json.Unmarshal(raw, &p) != nil {
+			return "", false
+		}
+		var b strings.Builder
+		b.WriteString(strings.TrimSpace(p.Summary))
+		for _, f := range p.Facts {
+			b.WriteByte(' ')
+			b.WriteString(f.Key)
+			b.WriteByte(' ')
+			b.WriteString(f.Value)
+		}
+		for _, s := range p.OpenItems {
+			b.WriteByte(' ')
+			b.WriteString(s)
+		}
+		for _, s := range p.Decisions {
+			b.WriteByte(' ')
+			b.WriteString(s)
+		}
+		out := strings.TrimSpace(b.String())
+		return clipRunes(out, 2000), out != ""
 	default:
 		return "", false
 	}

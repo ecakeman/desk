@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"desk/internal/config"
+	"desk/internal/ctxmgr"
 	"desk/internal/event"
 	"desk/internal/ids"
 	"desk/internal/memory"
@@ -30,6 +31,7 @@ type Service struct {
 	Index      *memory.Index
 	Sessions   *session.Store
 	PromptsDir string
+	Context    *ctxmgr.Manager
 
 	mu      sync.Mutex
 	pending map[string]*pendingApproval

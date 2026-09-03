@@ -31,6 +31,12 @@ type Config struct {
 	EmbedDim        int
 	Rerank          ModelConfig
 	RerankTimeoutMS int
+	Compact         ModelConfig
+	WindowTokens    int
+	SmallTriggerTok int
+	LargeTriggerTok int
+	LargeSmallCount int
+	RetrievalK      int
 }
 
 // Load 先读 .env 再读环境变量；已存在的环境变量不被 .env 覆盖。
@@ -73,8 +79,23 @@ func Load() Config {
 			Model:   getenv("DESK_RERANK_MODEL", ""),
 		},
 		RerankTimeoutMS: getenvInt("DESK_RERANK_TIMEOUT_MS", 3000),
+		Compact: modelSlot("DESK_COMPACT", ModelConfig{
+			BaseURL: getenv("DESK_FLASH_BASE_URL", getenv("DESK_MODEL_BASE_URL", "")),
+			APIKey:  getenv("DESK_FLASH_API_KEY", getenv("DESK_MODEL_API_KEY", "")),
+			Model:   getenv("DESK_FLASH_MODEL", getenv("DESK_MODEL_MODEL", "")),
+		}),
+		WindowTokens:    getenvInt("DESK_CTX_WINDOW_TOKENS", 4000),
+		SmallTriggerTok: getenvInt("DESK_CTX_SMALL_TRIGGER_TOKENS", 400),
+		LargeTriggerTok: getenvInt("DESK_CTX_LARGE_TRIGGER_TOKENS", 1200),
+		LargeSmallCount: getenvInt("DESK_CTX_LARGE_SMALL_COUNT", 3),
+		RetrievalK:      getenvInt("DESK_CTX_RETRIEVAL_K", 8),
 	}
 	return c
+}
+
+// CompactOK 表示 compact 槽有 URL 和模型，才走独立压缩 LLM。
+func (c Config) CompactOK() bool {
+	return c.Compact.BaseURL != "" && c.Compact.Model != ""
 }
 
 // EmbedOK 表示 embedding 三件套（URL、模型、维度）都齐，才挂 HTTPEmbedder。

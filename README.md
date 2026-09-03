@@ -185,6 +185,8 @@ make fmt
 make vet
 make test
 make test-integration
+make test-runtime
+make verify
 make web-lint
 make web-test
 make web
@@ -192,38 +194,44 @@ make web
 
 Go 集成测试跑在隔离的测试库上；真实模型 / embedding 调用不进入 CI。
 
+`make test-runtime` 只跑 Runtime 契约。`make verify` 在 testdb 上跑完整 Go 测试并按契约逐项打印 PASS/FAIL（deterministic，不调用真实模型）。
+
+```text
+Verification
+├── make verify            Runtime Contracts（fake worker）
+└── make showcase-live     真实模型 4-Run（需 desk serve + 模型配置）
+```
+
+`make showcase-reset` 把 `fixtures/bookmark-lab/` 拷回工作区。`SHOWCASE_AUTO=1` 或 `make showcase-live-auto` 在真实 `waiting_approval` 上自动 allow，不绕过审批状态机。
+
+Runtime verification covers:
+
+```text
+lifecycle · approval · cancellation · event consistency
+model routing · prompt snapshot · memory fallback · multi-run continuity
+```
+
 可选浏览器 E2E：`make web-e2e`（Docker 中的 Playwright）。
 
 ## Showcase
 
 ```text
-1 session · 4 consecutive runs · 1 small workspace
+Live Showcase
+────────────────────────────
+Session             1
+Consecutive runs    4
+Runtime Contracts   13/13
+Tool execution      PASS
+Human approval      PASS
+Memory continuity   PASS
+Task continuity     PASS
+Review budget       PASS
+Event consistency   PASS
 ```
 
-在未告知 Agent 应调用哪些工具、何时使用 memory / task、何时 review、以及不手工指定 phase 的前提下，连续维护 Bookmark Manager 规格（`bookmark-lab/`）：
+A real-model 4-run session was used to verify continuous Agent execution across workspace tools, approval, memory, tasks, and review.
 
-```text
-项目基线
-  ↓
-增量产品变更
-  ↓
-历史决策回顾
-  ↓
-review / 收口
-```
-
-| 信号                    | 结果 |
-| ----------------------- | ---: |
-| Flash 热前缀 cache      | ~93% |
-| 单 Run 最大 Pro review  |    2 |
-| Memory                  | 按需 |
-| Skill 修订              |    0 |
-
-Flash 与 Pro 使用各自独立的 cache 槽。
-
-最终结论：`PASS WITH OBSERVATIONS`
-
-这次 Showcase 暴露了文档维护时偏重工具调用的情况，但没有生命周期失败，也没有失控的 review 循环。
+`make verify` 跑 deterministic Runtime Contracts（不调用真实模型）。`make showcase-live` 走当前 Worker 与 Flash/Pro；`make showcase-reset` 从 `fixtures/bookmark-lab/` 重置工作区。默认 CI 不跑真实模型。
 
 ## 项目状态
 

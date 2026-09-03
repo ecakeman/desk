@@ -9,8 +9,25 @@ permissions:
 
 jobs:
   go:
-    name: Go checks and build
+    name: Go checks, tests and build
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: desk
+          POSTGRES_PASSWORD: desk
+          POSTGRES_DB: desk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U desk -d desk"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DESK_TEST_DATABASE_URL: postgres://desk:desk@127.0.0.1:5432/desk_test?sslmode=disable
+      DESK_MIGRATION_DIR: ${{ github.workspace }}/migrations
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -21,6 +38,8 @@ jobs:
         run: make fmt-check
       - name: Vet
         run: make vet
+      - name: Runtime tests
+        run: go test -p 1 -count=1 -timeout 180s ./cmd/... ./internal/... ./plugins/...
       - name: Build service and plugins
         run: |
           go build -o /tmp/desk ./cmd/desk
@@ -28,7 +47,7 @@ jobs:
           go build -o /tmp/desk-search ./plugins/search
 
   web:
-    name: Web lint and build
+    name: Web lint, test and build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -41,5 +60,7 @@ jobs:
         run: npm --prefix web ci
       - name: Lint
         run: npm --prefix web run lint
+      - name: Test
+        run: npm --prefix web run test
       - name: Build
         run: npm --prefix web run build

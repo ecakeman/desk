@@ -11,6 +11,7 @@ import (
 
 	"desk/internal/cli"
 	"desk/internal/config"
+	"desk/internal/ctxmgr"
 	"desk/internal/db"
 	"desk/internal/event"
 	"desk/internal/httpapi"
@@ -105,6 +106,17 @@ func runServe(cfg config.Config) error {
 	svc.Flash = cfg.Flash
 	svc.Pro = cfg.Pro
 	svc.PromptsDir = cfg.PromptsDir
+	svc.Context = ctxmgr.New(ev, idx, ctxmgr.Settings{
+		WindowTokens:    cfg.WindowTokens,
+		SmallTriggerTok: cfg.SmallTriggerTok,
+		LargeTriggerTok: cfg.LargeTriggerTok,
+		LargeSmallCount: cfg.LargeSmallCount,
+		RetrievalK:      cfg.RetrievalK,
+		PromptsDir:      cfg.PromptsDir,
+	})
+	if cfg.CompactOK() {
+		svc.Context.Compactor = ctxmgr.NewHTTPCompactor(cfg.Compact.BaseURL, cfg.Compact.APIKey, cfg.Compact.Model)
+	}
 	svc.Worker = worker.NewProcess(cfg.Python, cfg.Agent, append(os.Environ(),
 		"DESK_MODEL_BASE_URL="+cfg.Model.BaseURL,
 		"DESK_MODEL_API_KEY="+cfg.Model.APIKey,

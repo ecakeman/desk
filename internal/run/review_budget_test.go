@@ -56,6 +56,8 @@ func (b *budgetStub) Handle(in worker.In, _ func(worker.Out) error) (*worker.Out
 		T: "tool.request", ID: "1", Name: "ping.ok", Args: map[string]any{},
 	}
 	switch in.T {
+	case "context.replace":
+		return &worker.Out{T: "context.replaced"}, nil
 	case "turn.start":
 		return ping, nil
 	case "tool.result", "tool.denied":

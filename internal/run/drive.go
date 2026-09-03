@@ -10,7 +10,7 @@ import (
 	"desk/internal/worker"
 )
 
-// Drive 钉一份 Prompt Snapshot，投影 STM，按 plan → tool/ask → 终态转圈。
+// Drive 钉一份 Prompt Snapshot，由 ContextManager 组装上下文，按 plan → tool/ask → 终态转圈。
 // HTTP 调不到这里。ctx 取消走 Interrupt，其它错误走 Fail。
 func (s *Service) Drive(ctx context.Context, runID string) error {
 	var sessionID, workspace string
@@ -30,15 +30,6 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.Events.EnsureCompact(ctx, sessionID, runID); err != nil {
-		return err
-	}
-	msgs, err := s.Events.Messages(ctx, sessionID, runID)
-	if err != nil {
-		return err
-	}
-	userText := s.runUserText(ctx, runID)
-	msgs = append(msgs, s.skillInject(ctx, runID, workspace, userText)...)
 	var tools []any
 	for _, t := range snapshot.ApplyTools(s.Plugins.Tools()) {
 		tools = append(tools, t)
@@ -55,7 +46,7 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 		if in.Phase == "review" {
 			nProReview++
 		}
-		out, err := s.ask(ctx, runID, snapshot, in)
+		out, err := s.ask(ctx, runID, sessionID, workspace, snapshot, in)
 		if err != nil {
 			return nil, err
 		}
@@ -64,11 +55,10 @@ func (s *Service) Drive(ctx context.Context, runID string) error {
 	}
 
 	out, err := ask(worker.In{
-		T:        "turn.start",
-		RunID:    runID,
-		Messages: msgs,
-		Tools:    tools,
-		Phase:    phase,
+		T:     "turn.start",
+		RunID: runID,
+		Tools: tools,
+		Phase: phase,
 	})
 	if err != nil {
 		return err

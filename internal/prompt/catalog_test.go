@@ -33,6 +33,19 @@ func TestCatalogLoadsStableSnapshot(t *testing.T) {
 	}
 }
 
+func TestCatalogIgnoresCompactDirectory(t *testing.T) {
+	dir := filepath.Join("..", "..", "prompts")
+	snap, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range snap.Files() {
+		if strings.HasPrefix(f, "compact/") {
+			t.Fatalf("compact hashed: %s", f)
+		}
+	}
+}
+
 func TestCatalogOverridesDescriptionOnly(t *testing.T) {
 	snapshot, err := Load(filepath.Join("..", "..", "prompts"))
 	if err != nil {

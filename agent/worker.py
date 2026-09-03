@@ -38,10 +38,23 @@ def apply_host_system(msg):
         messages.insert(0, item)
 
 
+def is_user_mark(msg, mark):
+    return msg.get("role") == "user" and isinstance(msg.get("content"), str) and mark in msg["content"]
+
+
+def strip_user_mark(mark):
+    """丢掉旧的动态 user 块，避免 runtime / retrieval 无限累积。"""
+    global messages
+    messages[:] = [m for m in messages if not is_user_mark(m, mark)]
+
+
 def append_runtime(msg):
     """把当前 phase 策略作为动态数据追加到历史尾部。"""
+    if msg.get("skip_runtime"):
+        return
     runtime = msg.get("runtime")
     if isinstance(runtime, str) and runtime:
+        strip_user_mark("[RUNTIME: PHASE]")
         messages.append({"role": "user", "content": runtime})
 
 
@@ -197,6 +210,11 @@ for line in sys.stdin:
         tools = openai_tools(msg.get("tools"))
         append_runtime(msg)
         out = chat()
+    elif t == "context.replace":
+        messages = []
+        messages.extend(msg.get("messages") or [])
+        apply_host_system(msg)
+        out = {"t": "context.replaced"}
     elif t == "tool.result":
         if msg.get("ok"):
             data = msg.get("data")
@@ -208,6 +226,7 @@ for line in sys.stdin:
             "tool_call_id": msg.get("id"),
             "content": content,
         })
+        strip_user_mark("[CONTEXT: MEMORY]")
         messages.extend(msg.get("messages") or [])
         apply_host_system(msg)
         append_runtime(msg)
@@ -218,6 +237,7 @@ for line in sys.stdin:
             "tool_call_id": msg.get("id"),
             "content": "denied",
         })
+        strip_user_mark("[CONTEXT: MEMORY]")
         messages.extend(msg.get("messages") or [])
         apply_host_system(msg)
         append_runtime(msg)

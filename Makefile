@@ -6,7 +6,8 @@ COMPOSE := docker compose -f deployments/compose.yml
 DATABASE_URL ?= postgres://desk:desk@127.0.0.1:5432/desk?sslmode=disable
 PLAYWRIGHT_IMAGE ?= mcr.microsoft.com/playwright:v1.62.1-noble
 
-.PHONY: fmt fmt-check vet test test-integration plugins web web-lint web-test web-e2e \
+.PHONY: fmt fmt-check vet test test-integration test-runtime verify verify-live \
+	showcase-reset showcase-live showcase-live-auto plugins web web-lint web-test web-e2e \
 	go-build build serve chat db-up db-migrate db-down
 
 fmt:
@@ -28,6 +29,30 @@ test-integration: db-up db-migrate
 	DESK_DATABASE_URL="$(DATABASE_URL)" \
 	DESK_MIGRATION_DIR="$(CURDIR)/migrations" \
 	go test -p 1 -count=1 $(GO_PACKAGES)
+
+test-runtime:
+	go test -p 1 -count=1 -timeout 180s -run 'TestRuntimeContract' \
+		./internal/run/ ./internal/memory/ ./internal/httpapi/
+
+verify: db-up db-migrate
+	@chmod +x scripts/verify.sh
+	@bash scripts/verify.sh
+
+showcase-reset:
+	mkdir -p ws-probe
+	rm -rf ws-probe/bookmark-lab
+	cp -a fixtures/bookmark-lab ws-probe/bookmark-lab
+	@python3 scripts/showcase_live.py --reset-only
+
+showcase-live: plugins go-build
+	@chmod +x scripts/showcase_live.sh
+	@bash scripts/showcase_live.sh
+
+showcase-live-auto: plugins go-build
+	@chmod +x scripts/showcase_live.sh
+	@SHOWCASE_AUTO=1 bash scripts/showcase_live.sh
+
+verify-live: verify showcase-reset showcase-live-auto
 
 plugins:
 	go build -o plugins/fs/fs ./plugins/fs

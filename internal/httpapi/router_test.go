@@ -177,10 +177,14 @@ func TestDashboardReadEndpoints(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	var stm struct {
+		Kind     string           `json:"kind"`
 		Messages []map[string]any `json:"messages"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&stm); err != nil {
 		t.Fatal(err)
+	}
+	if stm.Kind != "event_projection" {
+		t.Fatalf("stm kind=%q", stm.Kind)
 	}
 	if len(stm.Messages) != 1 || stm.Messages[0]["content"] != "dashboard trace" {
 		t.Fatalf("stm=%#v", stm.Messages)

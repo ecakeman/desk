@@ -15,6 +15,7 @@ type compactPayload struct {
 }
 
 // EnsureCompact 超长时把一批旧 tool.completed 收成一条 compacted 事件；仍是事实。
+// Drive 已不再调用；保留给历史数据与单测。
 func (s *Store) EnsureCompact(ctx context.Context, sessionID, currentRunID string) error {
 	rows, err := s.sessionRows(ctx, sessionID)
 	if err != nil {

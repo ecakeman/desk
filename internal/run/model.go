@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"desk/internal/ctxmgr"
 	"desk/internal/event"
 	"desk/internal/prompt"
 	"desk/internal/worker"
@@ -34,19 +35,70 @@ func (s *Service) applySlot(in *worker.In) {
 	in.APIKey = cfg.APIKey
 }
 
-// ask 一次模型回合：钉稳定 system、把 phase 放在消息尾部、选槽并记录 delta。
-func (s *Service) ask(ctx context.Context, runID string, snapshot *prompt.Snapshot, in worker.In) (*worker.Out, error) {
+func (s *Service) contextMgr() *ctxmgr.Manager {
+	if s.Context == nil {
+		s.Context = ctxmgr.New(s.Events, s.Index, ctxmgr.Settings{
+			WindowTokens: 1_000_000,
+			PromptsDir:   s.PromptsDir,
+		})
+	}
+	if s.Context.Index == nil {
+		s.Context.Index = s.Index
+	}
+	if s.Context.Settings.PromptsDir == "" {
+		s.Context.Settings.PromptsDir = s.PromptsDir
+	}
+	return s.Context
+}
+
+// ask 一次模型回合：ContextManager 组装权威 snapshot，钉 system，phase 放尾部。
+func (s *Service) ask(ctx context.Context, runID, sessionID, workspace string, snapshot *prompt.Snapshot, in worker.In) (*worker.Out, error) {
 	in.RunID = runID
-	if in.Phase == "review" {
-		extra := s.attachReview(ctx, runID)
-		if len(extra) > 0 {
-			in.Messages = append(in.Messages, extra...)
+	pending := ""
+	if in.T == "tool.result" || in.T == "tool.denied" {
+		pending = in.ID
+	}
+	cm := s.contextMgr()
+	asm, err := cm.Prepare(ctx, ctxmgr.PrepareIn{
+		SessionID:    sessionID,
+		RunID:        runID,
+		Workspace:    workspace,
+		Phase:        in.Phase,
+		PromptHash:   snapshot.Hash(),
+		Runtime:      snapshot.Runtime(in.Phase),
+		PendingTool:  pending,
+		WantRetrieve: in.Phase == "review",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if in.T == "turn.start" {
+		in.Messages = asm.Messages
+	} else if asm.Rebuild {
+		replaced := append([]map[string]any{}, asm.Messages...)
+		if rt := snapshot.Runtime(in.Phase); rt != "" {
+			replaced = append(replaced, map[string]any{"role": "user", "content": rt})
 		}
+		if _, err := s.Worker.Handle(worker.In{
+			T:        "context.replace",
+			RunID:    runID,
+			Messages: replaced,
+			System:   snapshot.System(),
+		}, nil); err != nil {
+			return nil, err
+		}
+		in.SkipRuntime = true
+		in.Messages = nil
+	} else if in.Phase == "review" && len(asm.Layers.Retrieval) > 0 {
+		in.Messages = asm.Layers.Retrieval
 	}
 	s.applySlot(&in)
 	in.System = snapshot.System()
 	in.Runtime = snapshot.Runtime(in.Phase)
 	in.PromptHash = snapshot.Hash()
+	if in.SkipRuntime {
+		in.Runtime = ""
+	}
 	out, err := s.Worker.Handle(in, func(out worker.Out) error {
 		if out.T == "model.usage" {
 			_, err := s.appendOne(ctx, runID, event.TypeModelUsage, map[string]any{
@@ -73,6 +125,21 @@ func (s *Service) ask(ctx context.Context, runID string, snapshot *prompt.Snapsh
 	})
 	if err != nil {
 		return nil, err
+	}
+	applied := asm.Applied
+	applied.SkipRuntime = in.SkipRuntime
+	if _, err := s.appendOne(ctx, runID, event.TypeContextApplied, applied); err != nil {
+		return nil, err
+	}
+	if len(asm.Applied.Retrieval) > 0 {
+		brief := make([]map[string]any, 0, len(asm.Applied.Retrieval))
+		for _, h := range asm.Applied.Retrieval {
+			brief = append(brief, map[string]any{"run_id": h.RunID, "seq": h.Seq, "kind": h.Kind})
+		}
+		_, _ = s.appendOne(ctx, runID, event.TypeMemoryRetrieved, map[string]any{
+			"phase": in.Phase,
+			"hits":  brief,
+		})
 	}
 	if in.Phase == "review" {
 		if _, err := s.appendOne(ctx, runID, event.TypeReviewCompleted, map[string]any{
@@ -108,4 +175,9 @@ func reviewSummary(out *worker.Out) string {
 		summary = string([]rune(summary)[:240])
 	}
 	return summary
+}
+
+// InspectContext 返回最近一次组装的分层 Context，供 /context。
+func (s *Service) InspectContext(runID string) (ctxmgr.Assembly, bool) {
+	return s.contextMgr().Last(runID)
 }

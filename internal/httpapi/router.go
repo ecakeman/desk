@@ -177,7 +177,25 @@ func NewMux(deps Deps) *gin.Engine {
 			if messages == nil {
 				messages = []map[string]any{}
 			}
-			c.JSON(http.StatusOK, gin.H{"messages": messages})
+			c.JSON(http.StatusOK, gin.H{"kind": "event_projection", "messages": messages})
+		})
+		v1.GET("/runs/:id/context", func(c *gin.Context) {
+			item, err := deps.Runs.Get(c.Request.Context(), c.Param("id"))
+			if err != nil {
+				writeError(c, err)
+				return
+			}
+			asm, ok := deps.Messages.InspectContext(item.ID)
+			if !ok {
+				c.JSON(http.StatusNotFound, gin.H{"error": "no_context"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{
+				"kind":     "assembled",
+				"applied":  asm.Applied,
+				"layers":   asm.Layers,
+				"messages": asm.Messages,
+			})
 		})
 		v1.GET("/runs/:id/events/:seq", func(c *gin.Context) {
 			seq, err := strconv.Atoi(c.Param("seq"))

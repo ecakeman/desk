@@ -21,6 +21,8 @@ type writeStub struct{}
 
 func (writeStub) Handle(in worker.In, _ func(worker.Out) error) (*worker.Out, error) {
 	switch in.T {
+	case "context.replace":
+		return &worker.Out{T: "context.replaced"}, nil
 	case "turn.start":
 		return &worker.Out{
 			T: "tool.request", ID: "1", Name: "fs.write",
