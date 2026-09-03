@@ -1,60 +1,255 @@
 # Desk
 
-Desk 是一个本地优先的 Agent 控制面。
+**本地优先的 Agent 工作台与执行运行时。**
 
-Go 负责 Run、事件、审批和状态。Python 负责模型调用。PostgreSQL 保存持久状态，并用 pgvector 支撑 memory。Workspace 工具让 Agent 检查和修改本地文件。React 提供 Dashboard。
+Desk 将 Agent 执行抽象为一个**可持久化、可观察、可中断、带人工审批的事件驱动 Runtime**，而不是一次模型 API 调用。
 
-**Desk 把 Agent 执行当成可观察的事件驱动运行时，而不是一次模型 API 调用。**
-
-## 架构
+Go 负责 Runtime 控制面与状态管理，Python 负责模型执行，PostgreSQL 保存事件与持久状态，pgvector 支撑 Memory 检索，Workspace Plugins 负责受控文件操作。
 
 ```text
 CLI / Dashboard
-       │
-     HTTP/SSE
-       │
-       ▼
-┌───────────────┐
-│ Go Control    │
-│ Plane         │
-└───────┬───────┘
         │
- ┌──────┼──────────────┐
- ▼      ▼              ▼
-DB    Worker         Plugins
-       │              │
-       ▼              ▼
-   Flash / Pro     Workspace
+      HTTP / SSE
+        │
+        ▼
+┌─────────────────────┐
+│    Go Control Plane │
+│                     │
+│ Session / Run /     │
+│ Event / Approval    │
+└──────────┬──────────┘
+           │
+     ┌─────┴─────┐
+     │           │
+     ▼           ▼
+ContextManager  Worker
+     │           │
+     │        Python Process
+     │           │
+     │        Flash / Pro
+     │
+     ▼
+PostgreSQL + pgvector
+     │
+     ▼
+Workspace / Memory / Task
 ```
 
-- **Go**：session / run / event / approval，以及 `plan` → `act` → `review` 编排。
-- **Python**：OpenAI 兼容的 chat completions 与 tool-call 协议。
-- **PostgreSQL + pgvector**：持久事件、task，以及 memory 索引。
-- **Plugins**：在 jail 限定的工作区上做文件系统与搜索；memory / task 作为宿主持有的工具。
-- **React / Vite**：Dashboard 走同一套 HTTP/SSE。CLI（`desk chat` / `desk show`）是客户端，不是第二套运行时。
 
-以上都在一台机器上运行。
 
-## 能力
+## Core Design
 
-| 方面   | Desk 提供的内容                    |
-| ------ | ---------------------------------- |
-| 运行时 | plan → act → review                |
-| 模型   | Flash / Pro 槽位                   |
-| 工具   | filesystem、search、memory、tasks  |
-| Memory | PostgreSQL + pgvector              |
-| 安全   | 写操作需要审批                     |
-| 可观察 | events + SSE + Dashboard           |
-| Prompt | 版本化 catalog + 稳定 runtime 前缀 |
-| 测试   | 隔离的测试数据库                   |
 
-plan / review 走 Pro 槽，act 走 Flash。Prefix cache 按槽位隔离。单个 Run 最多进入 2 次 Pro review；超出后改走 act。
 
-## 快速开始
+### Event-driven Runtime
 
-**推荐：** Dev Container（Go 1.25、Python 3、Node 22、Docker-outside-of-Docker）。宿主机只需 Docker 和支持 Dev Containers 的编辑器。
+Desk 以 Event Store 作为执行事实源：
 
-否则需要：
+```text
+User Message
+    ↓
+Run Created
+    ↓
+Plan
+    ↓
+Act
+    ↓
+Tool Request
+    ↓
+Approval
+    ↓
+Tool Execution
+    ↓
+Review
+    ↓
+Run Completed / Interrupted
+```
+
+Run 不直接持有隐式状态，关键生命周期变化都通过 Event 持久化。
+
+这使 Runtime 可以：
+
+- 观察完整执行轨迹
+- 在进程退出后识别 orphan Run
+- 对 Tool / Approval / Interrupt 做确定性状态控制
+- 从事件重新构建运行上下文
+
+
+
+### ContextManager
+
+ContextManager 负责**一次 LLM Call 应该看到什么**。
+
+```text
+Event Store
+     ↓
+ContextManager
+ ├── Long-term Large Compact
+ ├── Small Compact
+ ├── Structured Facts
+ ├── Recent Window
+ ├── Skill
+ └── Retrieval
+     ↓
+Context Assembly
+     ↓
+Worker
+     ↓
+LLM
+```
+
+上下文采用分层策略：
+
+```text
+Stable Prefix
+────────────────────────────
+Large
+Small
+Facts
+Recent Window
+────────────────────────────
+Dynamic Suffix
+Skill
+Retrieval
+Runtime
+```
+
+窗口淘汰通过 durable `context.evicted` 记录，历史内容进入 Small Compact；多个 Small 再滚动合并为新的 Large baseline。
+
+ContextManager 同时按照**真实 LLM 请求预算**进行规划：
+
+```text
+System
++ Tools
++ Messages
++ Runtime
+≤ Total Budget
+```
+
+Tools 按实际发送的 OpenAI-shaped schema 计入预算；在预算不足时优先移除 Retrieval / Skill / Facts，不任意截断长期状态。
+
+没有可用 Compactor 时不会产生新的 durable eviction，避免原始历史在无法压缩时被不可逆丢弃。
+
+### Tool Safety
+
+模型只能提出 Tool Request，实际副作用由 Go Runtime 执行。
+
+```text
+LLM
+ ↓
+tool.request
+ ↓
+Risk Decision
+ ├── allow
+ └── waiting_approval
+         ↓
+      human decision
+         ↓
+    Plugin Execute
+         ↓
+    tool.completed
+```
+
+高风险写操作进入 Human-in-the-loop Approval。
+
+Workspace 操作通过 Plugin Registry 执行，而不是让 Python Runtime 直接修改宿主环境。
+
+### Memory
+
+Memory 使用 PostgreSQL + pgvector。
+
+当前检索链路支持：
+
+```text
+BM25 / PostgreSQL FTS
+        +
+Vector Search
+        ↓
+       RRF
+        ↓
+      Rerank
+```
+
+Embedding / Rerank 均为可选；未配置或失败时保持 BM25 / RRF fallback。
+
+Memory 是从 Event Store 派生的索引，不承担 Runtime 真相。
+
+### Model Routing
+
+Desk 使用 Flash / Pro 双模型槽位：
+
+```text
+plan   → Pro
+review → Pro
+act    → Flash
+```
+
+单个 Run 的 Pro Review 次数受预算控制，避免在普通执行路径中重复消耗高成本模型。
+
+Prompt 使用版本化 Catalog，并通过 Prompt Hash 记录本次 Run 使用的稳定 Prompt 快照。
+
+## Runtime Guarantees
+
+当前 Runtime 契约覆盖：
+
+```text
+Run lifecycle
+Tool Calling
+Approval
+Cancellation / Interrupt
+Event consistency
+Model routing
+Prompt snapshot
+Memory fallback
+Multi-run continuity
+Context budget
+Context compaction
+Worker adoption
+```
+
+核心约束：
+
+```text
+Event Store = source of truth
+ContextManager = context decision layer
+Worker = model execution layer
+Memory = derived retrieval index
+Recover = interrupt orphan runs
+```
+
+ContextManager 不接管 Worker 生命周期，也不把 Memory / Prompt Catalog / Event Store 重新抽象成第二套真相源。
+
+## Showcase
+
+真实模型连续运行验证：
+
+```text
+Session             1
+Consecutive Runs    4
+Runtime Contracts   13 / 13
+Tool Execution      PASS
+Human Approval      PASS
+Memory Continuity   PASS
+Task Continuity     PASS
+Review Budget       PASS
+Event Consistency   PASS
+```
+
+在同一个 Session 中连续完成 4 个 Run，验证 Workspace Mutation、Tool Calling、Human-in-the-loop Approval、Memory / Task Continuity 与 Pro Review。
+
+Flash 热前缀 Cache 命中约：
+
+```text
+93%
+```
+
+
+
+## Quick Start
+
+推荐使用 Dev Container。
+
+环境要求：
 
 ```text
 Docker / Docker Compose v2
@@ -63,10 +258,15 @@ Python 3
 Node.js 22.12+
 ```
 
+配置：
+
 ```bash
 cp .env.example .env
-# 填写 DESK_MODEL_*，或 DESK_FLASH_* + DESK_PRO_*
+```
 
+填写模型配置后：
+
+```bash
 make db-up
 make db-migrate
 make build
@@ -79,9 +279,13 @@ make serve
 curl http://127.0.0.1:8080/healthz
 ```
 
-Dashboard：[http://127.0.0.1:8080](http://127.0.0.1:8080)
+Dashboard：
 
-CLI（需先启动服务）：
+```text
+http://127.0.0.1:8080
+```
+
+CLI：
 
 ```bash
 ./bin/desk chat
@@ -89,30 +293,23 @@ CLI（需先启动服务）：
 ./bin/desk show <session_id>
 ```
 
-聊天中 `/quit` 退出，`/stop` 取消最近一次 Run；写操作等待 `y/n`。
+模型通过 OpenAI-compatible Chat Completions HTTP 接口访问。Desk 不针对不同供应商增加额外 Provider Adapter。
 
-## 配置
+## Configuration
 
-从 `.env.example` 复制为 `.env`。不要提交 `.env`。Desk 通过 OpenAI 兼容 HTTP 接口调用模型，不为不同供应商增加额外适配层。
 
-### 核心
 
-```text
-DESK_HTTP_ADDR      # 默认 :8080
-DESK_WORKSPACE      # 插件 jail 根目录；默认 .
-DESK_DATABASE_URL   # Postgres DSN（库名 desk）
-```
-
-### Prompt / Web
+### Core
 
 ```text
-DESK_PROMPTS_DIR    # 默认 prompts
-DESK_WEB_DIR        # 默认 web/dist
+DESK_HTTP_ADDR
+DESK_WORKSPACE
+DESK_DATABASE_URL
 ```
 
-每个 Run 开始时会对 catalog 做快照（稳定 system 前缀、phase / task / skill / memory 的 runtime 上下文、稳定工具顺序）。改 `prompts/` 会影响下一个 Run，无需重启进程。
 
-### 默认模型
+
+### Model
 
 ```text
 DESK_MODEL_BASE_URL
@@ -120,9 +317,7 @@ DESK_MODEL_API_KEY
 DESK_MODEL_MODEL
 ```
 
-`BASE_URL` 使用对应第三方提供的兼容 chat completions 地址。
-
-### 模型槽位
+或者分别配置：
 
 ```text
 DESK_FLASH_BASE_URL
@@ -134,9 +329,9 @@ DESK_PRO_API_KEY
 DESK_PRO_MODEL
 ```
 
-Flash / Pro 某字段为空时，回退到 `DESK_MODEL_*`。
+未配置的 Flash / Pro 字段回退到 `DESK_MODEL_*`。
 
-### Embedding / Rerank
+### Memory
 
 ```text
 DESK_EMBEDDING_BASE_URL
@@ -150,35 +345,22 @@ DESK_RERANK_MODEL
 DESK_RERANK_TIMEOUT_MS
 ```
 
-embedding / rerank 为可选。未配置或 rerank 失败时，Search 退回 BM25 / RRF。
 
-## 部署
 
-Desk 的定位是**本地单机运行**，不是托管式多租户服务。
+### Context
 
-### 本地 / Dev Container
-
-推荐开发方式：在 Dev Container 中打开仓库，再执行「快速开始」中的命令。
-
-### Docker / PostgreSQL
-
-`make db-up` 会构建并启动项目所需的 PostgreSQL + pgvector。初始化脚本同时创建 Go 测试用的 `desk_test`。`make db-down` 停止该栈。
-
-### 接近发布的本地构建
-
-```bash
-make web
-make build
-make serve
+```text
+DESK_CTX_WINDOW_TOKENS
+DESK_CTX_TOTAL_TOKENS
+DESK_CTX_SMALL_TRIGGER_TOKENS
+DESK_CTX_LARGE_TRIGGER_TOKENS
+DESK_CTX_LARGE_SMALL_COUNT
+DESK_CTX_RETRIEVAL_K
 ```
 
-若存在 `web/dist`，Go 服务会直接托管它。若需要前端热更新，可在 `desk serve` 已运行时执行 `npm --prefix web run dev`（端口 5173），Vite 会把 `/v1` 代理到 `127.0.0.1:8080`。
+`DESK_CTX_TOTAL_TOKENS` 是一次实际 LLM 请求的硬预算上限。
 
-### 测试库
-
-集成测试使用独立的 `desk_test` 数据库，绝不回落到生产用的 `DESK_DATABASE_URL`。
-
-## 开发
+## Development
 
 ```bash
 make fmt
@@ -192,65 +374,72 @@ make web-test
 make web
 ```
 
-Go 集成测试跑在隔离的测试库上；真实模型 / embedding 调用不进入 CI。
+集成测试使用独立 `desk_test` 数据库。
 
-`make test-runtime` 只跑 Runtime 契约。`make verify` 在 testdb 上跑完整 Go 测试并按契约逐项打印 PASS/FAIL（deterministic，不调用真实模型）。
+Runtime Contract Verification：
 
-```text
-Verification
-├── make verify            Runtime Contracts（fake worker）
-└── make showcase-live     真实模型 4-Run（需 desk serve + 模型配置）
+```bash
+make verify
 ```
 
-`make showcase-reset` 把 `fixtures/bookmark-lab/` 拷回工作区。`SHOWCASE_AUTO=1` 或 `make showcase-live-auto` 在真实 `waiting_approval` 上自动 allow，不绕过审批状态机。
+真实模型 Showcase：
 
-Runtime verification covers:
-
-```text
-lifecycle · approval · cancellation · event consistency
-model routing · prompt snapshot · memory fallback · multi-run continuity
+```bash
+make showcase-live
 ```
 
-可选浏览器 E2E：`make web-e2e`（Docker 中的 Playwright）。
+重置 Showcase Workspace：
 
-## Showcase
-
-```text
-Live Showcase
-────────────────────────────
-Session             1
-Consecutive runs    4
-Runtime Contracts   13/13
-Tool execution      PASS
-Human approval      PASS
-Memory continuity   PASS
-Task continuity     PASS
-Review budget       PASS
-Event consistency   PASS
+```bash
+make showcase-reset
 ```
 
-A real-model 4-run session was used to verify continuous Agent execution across workspace tools, approval, memory, tasks, and review.
+默认 CI 不调用真实模型。
 
-`make verify` 跑 deterministic Runtime Contracts（不调用真实模型）。`make showcase-live` 走当前 Worker 与 Flash/Pro；`make showcase-reset` 从 `fixtures/bookmark-lab/` 重置工作区。默认 CI 不跑真实模型。
-
-## 项目状态
+## Project Structure
 
 ```text
-V1 Pro
-Closed loop: 8/8
-Product: 6/6
-Observation: 2/2
+cmd/
+├── desk/                 CLI entry
+
+internal/
+├── run/                  Run lifecycle / orchestration
+├── ctxmgr/               Context planning / compaction
+├── event/                Event Store
+├── worker/               Worker protocol
+├── prompt/               Prompt catalog / snapshot
+├── memory/               Memory index / retrieval
+├── plugin/               Plugin registry
+├── approve/              Approval policy
+└── httpapi/              HTTP / SSE API
+
+agent/
+└── worker.py             Python model runtime
+
+web/
+└──                     React / Vite Dashboard
+
+deployments/
+└──                     PostgreSQL / local deployment
+
+fixtures/
+└── bookmark-lab/         Showcase workspace
 ```
 
-V1 Pro 已冻结为本地单机 Agent 控制面。
 
-## 范围
 
-非目标：
+## Scope
+
+Desk V1 定位为**本地单机 Agent Runtime**。
+
+明确非目标：
 
 - 多租户 SaaS
 - 公有云部署
 - HA / 水平扩展
 - 分布式 Worker
 - 操作系统级沙箱
-- 在 CI 中调用真实模型
+- CI 中调用真实模型
+
+
+
