@@ -19,33 +19,33 @@ func countType(t *testing.T, ev *event.Store, runID, typ string) int {
 	return n
 }
 
-func windowContents(asm Assembly) []string {
+func windowContents(contextAssembly Assembly) []string {
 	var out []string
-	for _, m := range asm.Layers.Window {
+	for _, m := range contextAssembly.Layers.Window {
 		out = append(out, fmtString(m["content"]))
 	}
 	return out
 }
 
 func TestInvariantFinalEstimateLeqTotal(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	m.Settings.TotalTokens = 80
 	m.Settings.SmallTriggerTok = 1_000_000
 	for i := 0; i < 10; i++ {
 		appendUser(t, ev, runID, strings.Repeat("inv1-", 10)+ids.New())
 	}
-	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := EstimateLLMInput("", nil, asm.Messages, "")
-	if got > m.Settings.TotalTokens && asm.Applied.OverBudget != "pending_tool" {
+	got := EstimateLLMInput("", nil, contextAssembly.Messages, "")
+	if got > m.Settings.TotalTokens && contextAssembly.Applied.OverBudget != "pending_tool" {
 		t.Fatalf("est %d > total %d", got, m.Settings.TotalTokens)
 	}
 }
 
 func TestInvariantEvictedNeverResurrects(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	m.Settings.TotalTokens = 60
 	m.Settings.SmallTriggerTok = 1_000_000
 	var first string
@@ -56,7 +56,7 @@ func TestInvariantEvictedNeverResurrects(t *testing.T) {
 		}
 		appendUser(t, ev, runID, text)
 	}
-	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestInvariantEvictedNeverResurrects(t *testing.T) {
 		t.Fatal("oldest should have left window")
 	}
 	appendUser(t, ev, runID, "newer-only")
-	a2, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	a2, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ func TestInvariantEvictedNeverResurrects(t *testing.T) {
 
 func TestInvariantSmallFailNoRetryUntilNewEvict(t *testing.T) {
 	fail := &StubCompactor{Raw: []byte(`not-json`)}
-	m, ev, sess, runID := testMgr(t, 20, fail)
+	m, ev, sessionID, runID := testMgr(t, 20, fail)
 	for i := 0; i < 8; i++ {
 		appendUser(t, ev, runID, strings.Repeat("retry-pad-", 8)+ids.New())
 	}
-	if _, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID}); err != nil {
+	if _, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID}); err != nil {
 		t.Fatal(err)
 	}
 	n1 := fail.N
@@ -103,7 +103,7 @@ func TestInvariantSmallFailNoRetryUntilNewEvict(t *testing.T) {
 	if countType(t, ev, runID, event.TypeContextCompactFailed) < 1 {
 		t.Fatal("missing compact_failed")
 	}
-	if _, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID}); err != nil {
+	if _, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID}); err != nil {
 		t.Fatal(err)
 	}
 	if fail.N != n1 {
@@ -113,7 +113,7 @@ func TestInvariantSmallFailNoRetryUntilNewEvict(t *testing.T) {
 	fail.Raw = okJSON
 	fail.Err = nil
 	appendUser(t, ev, runID, strings.Repeat("new-evict-", 10)+ids.New())
-	if _, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID}); err != nil {
+	if _, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID}); err != nil {
 		t.Fatal(err)
 	}
 	if fail.N <= n1 {
@@ -129,27 +129,27 @@ func TestInvariantActiveLargeUniqueAndSmallsAfter(t *testing.T) {
 		return []byte(`{"summary":"小压缩保留当前书签任务状态","facts":[{"key":"k","value":"v","status":"active","confidence":0.8,"source_event_seqs":[` + itoa(seq) + `]}],"open_items":["x"],"decisions":["d"]}`)
 	}
 	stub := &StubCompactor{Raw: smallJSON(1)}
-	m, ev, sess, runID := testMgr(t, 15, stub)
+	m, ev, sessionID, runID := testMgr(t, 15, stub)
 	m.Settings.LargeSmallCount = 2
 	m.Settings.SmallTriggerTok = 1
 	for i := 0; i < 12; i++ {
 		appendUser(t, ev, runID, strings.Repeat("large-payload-", 10)+ids.New())
 	}
-	if _, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID}); err != nil {
+	if _, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID}); err != nil {
 		t.Fatal(err)
 	}
 	stub.Raw = smallJSON(2)
 	for i := 0; i < 12; i++ {
 		appendUser(t, ev, runID, strings.Repeat("large-payload-b-", 10)+ids.New())
 	}
-	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(asm.Layers.Large) > 1 {
-		t.Fatalf("active large %d", len(asm.Layers.Large))
+	if len(contextAssembly.Layers.Large) > 1 {
+		t.Fatalf("active large %d", len(contextAssembly.Layers.Large))
 	}
-	events, err := ev.ListBySession(context.Background(), sess)
+	events, err := ev.ListBySession(context.Background(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,14 +174,14 @@ func TestInvariantFactProvenanceAllowed(t *testing.T) {
 }
 
 func TestInvariantNormalCallPrefixStable(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	appendUser(t, ev, runID, "prefix-user")
-	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	a2, err := m.Prepare(context.Background(), PrepareIn{
-		SessionID: sess, RunID: runID,
+		SessionID: sessionID, RunID: runID,
 		FrozenHits: []RetrievalHit{{RunID: runID, Seq: 1, Kind: "message.user", Text: "tail"}},
 	})
 	if err != nil {
@@ -202,9 +202,9 @@ func TestInvariantNormalCallPrefixStable(t *testing.T) {
 
 func TestInvariantReconstructSkipsCompactLLM(t *testing.T) {
 	stub := &StubCompactor{Err: context.Canceled}
-	m, ev, sess, runID := testMgr(t, 100000, stub)
+	m, ev, sessionID, runID := testMgr(t, 100000, stub)
 	appendUser(t, ev, runID, "inspect-skip-llm")
-	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,12 +214,12 @@ func TestInvariantReconstructSkipsCompactLLM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ev.Append(ctx, tx, runID, event.TypeContextApplied, asm.Applied); err != nil {
+	if _, err := ev.Append(ctx, tx, runID, event.TypeContextApplied, contextAssembly.Applied); err != nil {
 		t.Fatal(err)
 	}
 	_ = tx.Commit()
 	m.Forget(runID)
-	if _, src, ok := m.Inspect(ctx, sess, runID); !ok || src != "reconstructable" {
+	if _, src, ok := m.Inspect(ctx, sessionID, runID); !ok || src != "reconstructable" {
 		t.Fatalf("src=%s ok=%v", src, ok)
 	}
 	if stub.N != n {
@@ -228,21 +228,21 @@ func TestInvariantReconstructSkipsCompactLLM(t *testing.T) {
 }
 
 func TestWindowBudgetUsesRemainingWhenTotalSmaller(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 4000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 4000, &StubCompactor{Err: context.Canceled})
 	m.Settings.TotalTokens = 50
 	m.Settings.SmallTriggerTok = 1_000_000
 	for i := 0; i < 6; i++ {
 		appendUser(t, ev, runID, strings.Repeat("win-", 12)+ids.New())
 	}
-	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if asm.Applied.WindowBudget > m.Settings.TotalTokens {
-		t.Fatalf("window_budget %d > total", asm.Applied.WindowBudget)
+	if contextAssembly.Applied.WindowBudget > m.Settings.TotalTokens {
+		t.Fatalf("window_budget %d > total", contextAssembly.Applied.WindowBudget)
 	}
-	if asm.Applied.WindowEstimate > asm.Applied.WindowBudget && asm.Applied.OverBudget == "" {
-		t.Fatalf("window est %d > budget %d", asm.Applied.WindowEstimate, asm.Applied.WindowBudget)
+	if contextAssembly.Applied.WindowEstimate > contextAssembly.Applied.WindowBudget && contextAssembly.Applied.OverBudget == "" {
+		t.Fatalf("window est %d > budget %d", contextAssembly.Applied.WindowEstimate, contextAssembly.Applied.WindowBudget)
 	}
 }
 

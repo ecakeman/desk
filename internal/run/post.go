@@ -50,30 +50,30 @@ func NewService(db *sql.DB, events *event.Store) *Service {
 }
 
 // PostUserMessage 提交后立即返回 run_id；Drive 在后台跑。
-func (s *Service) PostUserMessage(ctx context.Context, sessionID, text, workspace string) (string, error) {
-	tx, err := s.DB.BeginTx(ctx, nil)
+func (service *Service) PostUserMessage(requestContext context.Context, sessionID, text, workspace string) (string, error) {
+	tx, err := service.DB.BeginTx(requestContext, nil)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback()
 
-	if _, err := s.Sessions.GetTx(ctx, tx, sessionID); err != nil {
+	if _, err := service.Sessions.GetTx(requestContext, tx, sessionID); err != nil {
 		return "", err
 	}
 
 	runID := ids.New()
-	if _, err := tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(requestContext,
 		`INSERT INTO runs (id, session_id, status, workspace_dir) VALUES ($1,$2,'running',$3)`,
 		runID, sessionID, workspace,
 	); err != nil {
 		return "", err
 	}
-	if _, err := s.Events.Append(ctx, tx, runID, event.TypeRunCreated, map[string]string{
+	if _, err := service.Events.Append(requestContext, tx, runID, event.TypeRunCreated, map[string]string{
 		"session_id": sessionID,
 	}); err != nil {
 		return "", err
 	}
-	if _, err := s.Events.Append(ctx, tx, runID, event.TypeMessageUser, map[string]string{
+	if _, err := service.Events.Append(requestContext, tx, runID, event.TypeMessageUser, map[string]string{
 		"text": text,
 	}); err != nil {
 		return "", err
@@ -81,23 +81,23 @@ func (s *Service) PostUserMessage(ctx context.Context, sessionID, text, workspac
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
-	if s.Worker != nil && s.Plugins != nil {
-		ctx, cancel := context.WithCancel(context.Background())
-		s.mu.Lock()
-		s.cancels[runID] = cancel
-		s.mu.Unlock()
+	if service.Worker != nil && service.Plugins != nil {
+		driveContext, cancel := context.WithCancel(context.Background())
+		service.mu.Lock()
+		service.cancels[runID] = cancel
+		service.mu.Unlock()
 		go func() {
 			defer func() {
-				s.mu.Lock()
-				delete(s.cancels, runID)
-				s.mu.Unlock()
+				service.mu.Lock()
+				delete(service.cancels, runID)
+				service.mu.Unlock()
 			}()
-			if err := s.Drive(ctx, runID); err != nil {
-				if ctx.Err() != nil {
-					_ = s.Interrupt(context.Background(), runID, "canceled")
+			if err := service.Drive(driveContext, runID); err != nil {
+				if driveContext.Err() != nil {
+					_ = service.Interrupt(context.Background(), runID, "canceled")
 					return
 				}
-				_ = s.Fail(context.Background(), runID, err.Error())
+				_ = service.Fail(context.Background(), runID, err.Error())
 			}
 		}()
 	}

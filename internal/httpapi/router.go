@@ -185,7 +185,7 @@ func NewMux(deps Deps) *gin.Engine {
 				writeError(c, err)
 				return
 			}
-			asm, src, ok := deps.Messages.InspectContext(c.Request.Context(), item.SessionID, item.ID)
+			contextAssembly, src, ok := deps.Messages.InspectContext(c.Request.Context(), item.SessionID, item.ID)
 			if !ok {
 				c.JSON(http.StatusNotFound, gin.H{"error": "no_context"})
 				return
@@ -193,9 +193,9 @@ func NewMux(deps Deps) *gin.Engine {
 			out := gin.H{
 				"kind":     "context",
 				"source":   src,
-				"applied":  asm.Applied,
-				"layers":   asm.Layers,
-				"messages": asm.Messages,
+				"applied":  contextAssembly.Applied,
+				"layers":   contextAssembly.Layers,
+				"messages": contextAssembly.Messages,
 			}
 			if src == "reconstructable" {
 				out["reconstructable_note"] = "not a byte-for-byte prompt replay; prompt body is not snapshotted"

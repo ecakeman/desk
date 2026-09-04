@@ -19,9 +19,9 @@ func testMgr(t *testing.T, window int, stub *StubCompactor) (*Manager, *event.St
 	t.Helper()
 	db := testdb.Open(t)
 	ctx := context.Background()
-	sess := testdb.InsertSession(t, db)
+	sessionID := testdb.InsertSession(t, db)
 	runID := ids.New()
-	if _, err := db.ExecContext(ctx, `INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running','')`, runID, sess); err != nil {
+	if _, err := db.ExecContext(ctx, `INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running','')`, runID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	ev := event.NewStore(db)
@@ -37,7 +37,7 @@ func testMgr(t *testing.T, window int, stub *StubCompactor) (*Manager, *event.St
 		PromptsDir:      filepath.Join(root, "prompts"),
 	})
 	m.Compactor = stub
-	return m, ev, sess, runID
+	return m, ev, sessionID, runID
 }
 
 func appendUser(t *testing.T, ev *event.Store, runID, text string) {
@@ -58,45 +58,45 @@ func appendUser(t *testing.T, ev *event.Store, runID, text string) {
 
 func TestPrepareUnderWindowNoCompact(t *testing.T) {
 	stub := &StubCompactor{Err: context.Canceled}
-	m, ev, sess, runID := testMgr(t, 100000, stub)
+	m, ev, sessionID, runID := testMgr(t, 100000, stub)
 	appendUser(t, ev, runID, "hello context")
-	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID, Phase: "plan"})
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID, Phase: "plan"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stub.N != 0 {
 		t.Fatalf("compact called %d", stub.N)
 	}
-	if asm.Rebuild {
+	if contextAssembly.Rebuild {
 		t.Fatal("rebuild")
 	}
 	found := false
-	for _, msg := range asm.Messages {
+	for _, msg := range contextAssembly.Messages {
 		if strings.Contains(fmtString(msg["content"]), "hello context") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("missing user: %#v", asm.Messages)
+		t.Fatalf("missing user: %#v", contextAssembly.Messages)
 	}
 }
 
 func TestPrepareSmallCompactSuccessAndFailure(t *testing.T) {
 	ok := []byte(`{"summary":"会话要维护书签规则与状态文件","facts":[{"key":"goal","value":"write STATUS","status":"active","confidence":0.9,"source_event_seqs":[1]}],"open_items":["STATUS.md"],"decisions":[]}`)
 	stub := &StubCompactor{Raw: ok}
-	m, ev, sess, runID := testMgr(t, 20, stub)
+	m, ev, sessionID, runID := testMgr(t, 20, stub)
 	for i := 0; i < 8; i++ {
 		appendUser(t, ev, runID, strings.Repeat("window-payload-", 8)+ids.New())
 	}
-	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID, Phase: "plan"})
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID, Phase: "plan"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stub.N == 0 {
 		t.Fatal("expected compact")
 	}
-	if !asm.Rebuild && asm.CompactionReason == "" {
-		t.Fatalf("expected compact reason %+v", asm.Applied)
+	if !contextAssembly.Rebuild && contextAssembly.CompactionReason == "" {
+		t.Fatalf("expected compact reason %+v", contextAssembly.Applied)
 	}
 	var n int
 	if err := ev.DB.QueryRow(`SELECT COUNT(*) FROM events WHERE run_id=$1 AND type=$2`, runID, event.TypeContextSmallCompact).Scan(&n); err != nil {
@@ -109,7 +109,7 @@ func TestPrepareSmallCompactSuccessAndFailure(t *testing.T) {
 	fail := &StubCompactor{Err: context.Canceled}
 	m.Compactor = fail
 	before := n
-	_, err = m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID, Phase: "act"})
+	_, err = m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID, Phase: "act"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,13 +126,13 @@ func TestLargeRollingBaseline(t *testing.T) {
 		return []byte(`{"summary":"小压缩保留当前书签任务状态","facts":[{"key":"k","value":"v","status":"active","confidence":0.8,"source_event_seqs":[` + itoa(seq) + `]}],"open_items":["x"],"decisions":["d"]}`)
 	}
 	stub := &StubCompactor{Raw: smallJSON(1)}
-	m, ev, sess, runID := testMgr(t, 15, stub)
+	m, ev, sessionID, runID := testMgr(t, 15, stub)
 	m.Settings.LargeSmallCount = 2
 	m.Settings.SmallTriggerTok = 1
 	for i := 0; i < 12; i++ {
 		appendUser(t, ev, runID, strings.Repeat("large-payload-", 10)+ids.New())
 	}
-	_, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	_, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestLargeRollingBaseline(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		appendUser(t, ev, runID, strings.Repeat("large-payload-b-", 10)+ids.New())
 	}
-	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,18 +153,18 @@ func TestLargeRollingBaseline(t *testing.T) {
 	if larges > 1 {
 		// rolling may write one large; more is ok as history but assemble uses latest
 	}
-	if asm.Applied.LargeSeq == 0 && larges > 0 {
+	if contextAssembly.Applied.LargeSeq == 0 && larges > 0 {
 		t.Fatal("active large not in applied")
 	}
 }
 
 func TestInvalidCompactDoesNotWrite(t *testing.T) {
 	stub := &StubCompactor{Raw: []byte(`not-json`)}
-	m, ev, sess, runID := testMgr(t, 20, stub)
+	m, ev, sessionID, runID := testMgr(t, 20, stub)
 	for i := 0; i < 8; i++ {
 		appendUser(t, ev, runID, strings.Repeat("bad-compact-", 10)+ids.New())
 	}
-	_, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	_, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,13 +178,13 @@ func TestInvalidCompactDoesNotWrite(t *testing.T) {
 }
 
 func TestAssembleStablePrefixThenRetrieval(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	appendUser(t, ev, runID, "stable user text")
-	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID, Phase: "act"})
+	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID, Phase: "act"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a2, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID, Phase: "act", WantRetrieve: false})
+	a2, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID, Phase: "act", WantRetrieve: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestAssembleStablePrefixThenRetrieval(t *testing.T) {
 }
 
 func TestTotalBudgetBoundsEstimate(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	m.Settings.TotalTokens = 70
 	m.Settings.SmallTriggerTok = 1_000_000
 	for i := 0; i < 12; i++ {
@@ -211,26 +211,26 @@ func TestTotalBudgetBoundsEstimate(t *testing.T) {
 		RunID: runID, Seq: 1, Kind: event.TypeMessageUser,
 		Text: strings.Repeat("retrieval-padding ", 40),
 	}}
-	asm, err := m.Prepare(context.Background(), PrepareIn{
-		SessionID: sess, RunID: runID, FrozenHits: hits,
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{
+		SessionID: sessionID, RunID: runID, FrozenHits: hits,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := EstimateLLMInput("", nil, asm.Messages, "")
+	got := EstimateLLMInput("", nil, contextAssembly.Messages, "")
 	if got > m.Settings.TotalTokens {
 		t.Fatalf("estimate %d > total %d", got, m.Settings.TotalTokens)
 	}
-	if len(asm.Applied.Retrieval) != 0 {
+	if len(contextAssembly.Applied.Retrieval) != 0 {
 		t.Fatal("retrieval should be dropped under total")
 	}
-	if !asm.Rebuild {
+	if !contextAssembly.Rebuild {
 		t.Fatal("total trim should rebuild")
 	}
 }
 
 func TestSkillAfterWindowStablePrefix(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	work := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(work, "memory", "skills"), 0755); err != nil {
 		t.Fatal(err)
@@ -256,7 +256,7 @@ func TestSkillAfterWindowStablePrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	appendUser(t, ev, runID, "please follow unique-token-xyz ping skill")
-	a1, err := m.Prepare(ctx, PrepareIn{SessionID: sess, RunID: runID, Workspace: work})
+	a1, err := m.Prepare(ctx, PrepareIn{SessionID: sessionID, RunID: runID, Workspace: work})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestSkillAfterWindowStablePrefix(t *testing.T) {
 	}
 	hits := []RetrievalHit{{RunID: runID, Seq: 1, Kind: event.TypeMessageUser, Text: "tail-only-memory"}}
 	a2, err := m.Prepare(ctx, PrepareIn{
-		SessionID: sess, RunID: runID, Workspace: work, FrozenHits: hits,
+		SessionID: sessionID, RunID: runID, Workspace: work, FrozenHits: hits,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -294,9 +294,9 @@ func TestSkillAfterWindowStablePrefix(t *testing.T) {
 }
 
 func TestInspectReconstructableAfterForget(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	appendUser(t, ev, runID, "durable inspect")
-	asm, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,18 +305,18 @@ func TestInspectReconstructableAfterForget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ev.Append(ctx, tx, runID, event.TypeContextApplied, asm.Applied); err != nil {
+	if _, err := ev.Append(ctx, tx, runID, event.TypeContextApplied, contextAssembly.Applied); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	got, src, ok := m.Inspect(ctx, sess, runID)
+	got, src, ok := m.Inspect(ctx, sessionID, runID)
 	if !ok || src != "assembled" || len(got.Messages) == 0 {
 		t.Fatalf("assembled src=%s ok=%v", src, ok)
 	}
 	m.Forget(runID)
-	got, src, ok = m.Inspect(ctx, sess, runID)
+	got, src, ok = m.Inspect(ctx, sessionID, runID)
 	if !ok || src != "reconstructable" || len(got.Messages) == 0 {
 		t.Fatalf("reconstructable src=%s ok=%v", src, ok)
 	}

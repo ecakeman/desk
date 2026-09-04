@@ -27,21 +27,21 @@ func NewStore(db *sql.DB) *Store {
 }
 
 // Get 按 id 取 Run。
-func (s *Store) Get(ctx context.Context, id string) (*Run, error) {
-	var out Run
-	err := s.DB.QueryRowContext(ctx,
+func (runStore *Store) Get(requestContext context.Context, id string) (*Run, error) {
+	var foundRun Run
+	err := runStore.DB.QueryRowContext(requestContext,
 		`SELECT id, session_id, status, workspace_dir, created_at, updated_at FROM runs WHERE id=$1`,
 		id,
-	).Scan(&out.ID, &out.SessionID, &out.Status, &out.WorkspaceDir, &out.CreatedAt, &out.UpdatedAt)
+	).Scan(&foundRun.ID, &foundRun.SessionID, &foundRun.Status, &foundRun.WorkspaceDir, &foundRun.CreatedAt, &foundRun.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return &foundRun, nil
 }
 
 // ListBySession 返回该 Session 最近的 Run，新的在前。
-func (s *Store) ListBySession(ctx context.Context, sessionID string) ([]Run, error) {
-	rows, err := s.DB.QueryContext(ctx, `
+func (runStore *Store) ListBySession(requestContext context.Context, sessionID string) ([]Run, error) {
+	rows, err := runStore.DB.QueryContext(requestContext, `
 		SELECT id, session_id, status, workspace_dir, created_at, updated_at
 		FROM runs
 		WHERE session_id=$1
@@ -53,67 +53,67 @@ func (s *Store) ListBySession(ctx context.Context, sessionID string) ([]Run, err
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]Run, 0)
+	sessionRuns := make([]Run, 0)
 	for rows.Next() {
-		var item Run
+		var runRow Run
 		if err := rows.Scan(
-			&item.ID, &item.SessionID, &item.Status, &item.WorkspaceDir,
-			&item.CreatedAt, &item.UpdatedAt,
+			&runRow.ID, &runRow.SessionID, &runRow.Status, &runRow.WorkspaceDir,
+			&runRow.CreatedAt, &runRow.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
-		out = append(out, item)
+		sessionRuns = append(sessionRuns, runRow)
 	}
-	return out, rows.Err()
+	return sessionRuns, rows.Err()
 }
 
 // Delete 删该 Run 的 memory_docs、events 和 runs 行。
-func (s *Store) Delete(ctx context.Context, id string) error {
-	tx, err := s.DB.BeginTx(ctx, nil)
+func (runStore *Store) Delete(requestContext context.Context, id string) error {
+	tx, err := runStore.DB.BeginTx(requestContext, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := s.Get(ctx, id); err != nil {
+	if _, err := runStore.Get(requestContext, id); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM memory_docs WHERE run_id=$1`, id); err != nil {
+	if _, err := tx.ExecContext(requestContext, `DELETE FROM memory_docs WHERE run_id=$1`, id); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE run_id=$1`, id); err != nil {
+	if _, err := tx.ExecContext(requestContext, `DELETE FROM events WHERE run_id=$1`, id); err != nil {
 		return err
 	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM runs WHERE id=$1`, id)
+	sqlResult, err := tx.ExecContext(requestContext, `DELETE FROM runs WHERE id=$1`, id)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
+	affectedRows, err := sqlResult.RowsAffected()
 	if err != nil {
 		return err
 	}
-	if n != 1 {
+	if affectedRows != 1 {
 		return sql.ErrNoRows
 	}
 	return tx.Commit()
 }
 
 // Transition 在事务里把 status 从 from 改为 to；非法转移返回 ErrConflict。
-func Transition(ctx context.Context, tx *sql.Tx, id, from, to string) error {
+func Transition(requestContext context.Context, tx *sql.Tx, id, from, to string) error {
 	if !Can(from, to) {
 		return ErrConflict
 	}
-	res, err := tx.ExecContext(ctx,
+	sqlResult, err := tx.ExecContext(requestContext,
 		`UPDATE runs SET status=$1,updated_at=now() WHERE id=$2 AND status=$3`,
 		to, id, from,
 	)
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
+	affectedRows, err := sqlResult.RowsAffected()
 	if err != nil {
 		return err
 	}
-	if n != 1 {
+	if affectedRows != 1 {
 		return ErrConflict
 	}
 	return nil

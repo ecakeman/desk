@@ -106,11 +106,11 @@ func budgetEnv(t *testing.T, stub *budgetStub) *Service {
 		t.Fatal(err)
 	}
 	reg.Put(pingPlugin{})
-	svc := NewService(db, event.NewStore(db))
-	svc.Plugins = reg
-	svc.Worker = stub
-	svc.PromptsDir = filepath.Join(root, "prompts")
-	return svc
+	runService := NewService(db, event.NewStore(db))
+	runService.Plugins = reg
+	runService.Worker = stub
+	runService.PromptsDir = filepath.Join(root, "prompts")
+	return runService
 }
 
 func TestBoundReview(t *testing.T) {
@@ -127,13 +127,13 @@ func TestBoundReview(t *testing.T) {
 
 func TestReviewBudgetOneReviewFinishes(t *testing.T) {
 	stub := &budgetStub{finishReviews: 1}
-	svc := budgetEnv(t, stub)
-	sess := testdb.InsertSession(t, svc.DB)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "one review", t.TempDir())
+	runService := budgetEnv(t, stub)
+	sessionID := testdb.InsertSession(t, runService.DB)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "one review", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitStatus(t, svc.DB, runID, StatusCompleted)
+	waitStatus(t, runService.DB, runID, StatusCompleted)
 	got := stub.proReviews()
 	if len(got) != 1 {
 		t.Fatalf("pro review calls=%d %+v", len(got), stub.asks)
@@ -142,13 +142,13 @@ func TestReviewBudgetOneReviewFinishes(t *testing.T) {
 
 func TestReviewBudgetTwoReviewsFinishes(t *testing.T) {
 	stub := &budgetStub{finishReviews: 2}
-	svc := budgetEnv(t, stub)
-	sess := testdb.InsertSession(t, svc.DB)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "two reviews", t.TempDir())
+	runService := budgetEnv(t, stub)
+	sessionID := testdb.InsertSession(t, runService.DB)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "two reviews", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitStatus(t, svc.DB, runID, StatusCompleted)
+	waitStatus(t, runService.DB, runID, StatusCompleted)
 	got := stub.proReviews()
 	if len(got) != 2 {
 		t.Fatalf("pro review calls=%d", len(got))
@@ -158,13 +158,13 @@ func TestReviewBudgetTwoReviewsFinishes(t *testing.T) {
 func TestReviewBudgetBlocksThirdProReview(t *testing.T) {
 	// 第 5、10 次成功工具会请求 review；第 15 次若预算生效则仍是 act。
 	stub := &budgetStub{finishTools: 15}
-	svc := budgetEnv(t, stub)
-	sess := testdb.InsertSession(t, svc.DB)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "block third", t.TempDir())
+	runService := budgetEnv(t, stub)
+	sessionID := testdb.InsertSession(t, runService.DB)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "block third", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitStatus(t, svc.DB, runID, StatusCompleted)
+	waitStatus(t, runService.DB, runID, StatusCompleted)
 	got := stub.proReviews()
 	if len(got) != 2 {
 		t.Fatalf("pro review calls=%d want 2; asks=%+v", len(got), stub.asks)
@@ -191,7 +191,7 @@ func TestReviewBudgetBlocksThirdProReview(t *testing.T) {
 		t.Fatalf("15th ask = %+v want act/flash", *fifteenth)
 	}
 	var nReviewEvents int
-	if err := svc.DB.QueryRow(
+	if err := runService.DB.QueryRow(
 		`SELECT COUNT(*) FROM events WHERE run_id=$1 AND type=$2`,
 		runID, event.TypeReviewCompleted,
 	).Scan(&nReviewEvents); err != nil {
@@ -204,13 +204,13 @@ func TestReviewBudgetBlocksThirdProReview(t *testing.T) {
 
 func TestReviewBudgetReviewFailStillFails(t *testing.T) {
 	stub := &budgetStub{failReview: true}
-	svc := budgetEnv(t, stub)
-	sess := testdb.InsertSession(t, svc.DB)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "review fail", t.TempDir())
+	runService := budgetEnv(t, stub)
+	sessionID := testdb.InsertSession(t, runService.DB)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "review fail", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitStatus(t, svc.DB, runID, StatusFailed)
+	waitStatus(t, runService.DB, runID, StatusFailed)
 	if len(stub.proReviews()) != 1 {
 		t.Fatalf("pro reviews=%d", len(stub.proReviews()))
 	}
@@ -218,13 +218,13 @@ func TestReviewBudgetReviewFailStillFails(t *testing.T) {
 
 func TestReviewBudgetPlanActFinishUnchanged(t *testing.T) {
 	stub := &budgetStub{finishTools: 1}
-	svc := budgetEnv(t, stub)
-	sess := testdb.InsertSession(t, svc.DB)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "no review", t.TempDir())
+	runService := budgetEnv(t, stub)
+	sessionID := testdb.InsertSession(t, runService.DB)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "no review", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitStatus(t, svc.DB, runID, StatusCompleted)
+	waitStatus(t, runService.DB, runID, StatusCompleted)
 	if len(stub.proReviews()) != 0 {
 		t.Fatalf("unexpected review %+v", stub.proReviews())
 	}

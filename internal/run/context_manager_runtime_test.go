@@ -25,20 +25,20 @@ func TestContextRebuildReplacesWorkerMessages(t *testing.T) {
 		return &worker.Out{T: "turn.finish", Text: "ok"}
 	}}
 	work := t.TempDir()
-	svc, db := contractEnv(t, w, work)
+	runService, db := contractEnv(t, w, work)
 	ok := []byte(`{"summary":"保留当前工具推进状态","facts":[{"key":"step","value":"ping","status":"active","confidence":0.9,"source_event_seqs":[1]}],"open_items":[],"decisions":["continue"]}`)
-	cm := ctxmgr.New(svc.Events, svc.Index, ctxmgr.Settings{
+	contextManager := ctxmgr.New(runService.Events, runService.Index, ctxmgr.Settings{
 		WindowTokens:    20,
 		TotalTokens:     1_000_000,
 		SmallTriggerTok: 1,
 		LargeSmallCount: 99,
 		PromptsDir:      filepath.Join(repoRoot(t), "prompts"),
 	})
-	cm.Compactor = &ctxmgr.StubCompactor{Raw: ok}
-	svc.Context = cm
-	sess := testdb.InsertSession(t, db)
+	contextManager.Compactor = &ctxmgr.StubCompactor{Raw: ok}
+	runService.Context = contextManager
+	sessionID := testdb.InsertSession(t, db)
 	runID := ids.New()
-	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running',$3)`, runID, sess, work); err != nil {
+	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running',$3)`, runID, sessionID, work); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {
@@ -46,16 +46,16 @@ func TestContextRebuildReplacesWorkerMessages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := svc.Events.Append(context.Background(), tx, runID, event.TypeMessageUser, map[string]string{"text": strings.Repeat("evict-me ", 12)}); err != nil {
+		if _, err := runService.Events.Append(context.Background(), tx, runID, event.TypeMessageUser, map[string]string{"text": strings.Repeat("evict-me ", 12)}); err != nil {
 			t.Fatal(err)
 		}
 		_ = tx.Commit()
 	}
-	asm, err := cm.Prepare(context.Background(), ctxmgr.PrepareIn{SessionID: sess, RunID: runID, Workspace: work})
+	contextAssembly, err := contextManager.Prepare(context.Background(), ctxmgr.PrepareIn{SessionID: sessionID, RunID: runID, Workspace: work})
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := svc.Worker.Handle(worker.In{T: "context.replace", RunID: runID, Messages: asm.Messages}, nil)
+	out, err := runService.Worker.Handle(worker.In{T: "context.replace", RunID: runID, Messages: contextAssembly.Messages}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,15 +76,15 @@ func TestContextReconstructionFromDurableState(t *testing.T) {
 		return &worker.Out{T: "turn.finish", Text: "done"}
 	}}
 	work := t.TempDir()
-	svc, db := contractEnv(t, w, work)
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "inspect me", work, StatusCompleted)
-	first, src, ok := svc.InspectContext(context.Background(), sess, runID)
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "inspect me", work, StatusCompleted)
+	first, src, ok := runService.InspectContext(context.Background(), sessionID, runID)
 	if !ok || src != "assembled" || len(first.Messages) == 0 {
 		t.Fatal("missing assembly")
 	}
-	svc.contextMgr().Forget(runID)
-	again, src2, ok := svc.InspectContext(context.Background(), sess, runID)
+	runService.contextMgr().Forget(runID)
+	again, src2, ok := runService.InspectContext(context.Background(), sessionID, runID)
 	if !ok || src2 != "reconstructable" || len(again.Messages) == 0 {
 		t.Fatalf("durable inspect src=%s ok=%v", src2, ok)
 	}
@@ -94,12 +94,12 @@ func TestRetrievalBoundedAndEmpty(t *testing.T) {
 	w := &recWorker{fn: func(in worker.In) *worker.Out {
 		return &worker.Out{T: "turn.finish", Text: "ok"}
 	}}
-	svc, db := contractEnv(t, w, t.TempDir())
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "no history yet", t.TempDir(), StatusCompleted)
-	asm, _, _ := svc.InspectContext(context.Background(), sess, runID)
-	if len(asm.Applied.Retrieval) > 8 {
-		t.Fatalf("unbounded retrieval %d", len(asm.Applied.Retrieval))
+	runService, db := contractEnv(t, w, t.TempDir())
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "no history yet", t.TempDir(), StatusCompleted)
+	contextAssembly, _, _ := runService.InspectContext(context.Background(), sessionID, runID)
+	if len(contextAssembly.Applied.Retrieval) > 8 {
+		t.Fatalf("unbounded retrieval %d", len(contextAssembly.Applied.Retrieval))
 	}
 }
 
@@ -109,20 +109,20 @@ func TestReplaceFailDoesNotWriteApplied(t *testing.T) {
 	}}
 	w := &failReplaceWorker{inner: inner}
 	work := t.TempDir()
-	svc, db := contractEnv(t, w, work)
+	runService, db := contractEnv(t, w, work)
 	okJSON := []byte(`{"summary":"保留当前工具推进状态足够长","facts":[{"key":"step","value":"ping","status":"active","confidence":0.9,"source_event_seqs":[1]}],"open_items":[],"decisions":["continue"]}`)
-	cm := ctxmgr.New(svc.Events, svc.Index, ctxmgr.Settings{
+	contextManager := ctxmgr.New(runService.Events, runService.Index, ctxmgr.Settings{
 		WindowTokens:    20,
 		TotalTokens:     1_000_000,
 		SmallTriggerTok: 1,
 		LargeSmallCount: 99,
 		PromptsDir:      filepath.Join(repoRoot(t), "prompts"),
 	})
-	cm.Compactor = &ctxmgr.StubCompactor{Raw: okJSON}
-	svc.Context = cm
-	sess := testdb.InsertSession(t, db)
+	contextManager.Compactor = &ctxmgr.StubCompactor{Raw: okJSON}
+	runService.Context = contextManager
+	sessionID := testdb.InsertSession(t, db)
 	runID := ids.New()
-	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running',$3)`, runID, sess, work); err != nil {
+	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running',$3)`, runID, sessionID, work); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10; i++ {
@@ -130,16 +130,16 @@ func TestReplaceFailDoesNotWriteApplied(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := svc.Events.Append(context.Background(), tx, runID, event.TypeMessageUser, map[string]string{"text": strings.Repeat("evict-me ", 12)}); err != nil {
+		if _, err := runService.Events.Append(context.Background(), tx, runID, event.TypeMessageUser, map[string]string{"text": strings.Repeat("evict-me ", 12)}); err != nil {
 			t.Fatal(err)
 		}
 		_ = tx.Commit()
 	}
-	snapshot, err := prompt.Load(svc.PromptsDir)
+	snapshot, err := prompt.Load(runService.PromptsDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.ask(context.Background(), runID, sess, work, snapshot, worker.In{
+	_, err = runService.ask(context.Background(), runID, sessionID, work, snapshot, worker.In{
 		T: "tool.result", ID: "call-1", Phase: "act", OK: true,
 	})
 	if err == nil {
@@ -165,9 +165,9 @@ func TestReplaceFailDoesNotWriteApplied(t *testing.T) {
 
 func TestChatHandleFailDoesNotWriteApplied(t *testing.T) {
 	w := &errStartWorker{}
-	svc, db := contractEnv(t, w, t.TempDir())
-	sess := testdb.InsertSession(t, db)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "chat fail", t.TempDir())
+	runService, db := contractEnv(t, w, t.TempDir())
+	sessionID := testdb.InsertSession(t, db)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "chat fail", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,17 +184,17 @@ func TestChatHandleFailDoesNotWriteApplied(t *testing.T) {
 func TestAskSuccessWritesApplied(t *testing.T) {
 	w := &recWorker{}
 	work := t.TempDir()
-	svc, db := contractEnv(t, w, work)
-	sess := testdb.InsertSession(t, db)
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
 	runID := ids.New()
-	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running',$3)`, runID, sess, work); err != nil {
+	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running',$3)`, runID, sessionID, work); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := prompt.Load(svc.PromptsDir)
+	snapshot, err := prompt.Load(runService.PromptsDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ask(context.Background(), runID, sess, work, snapshot, worker.In{
+	if _, err := runService.ask(context.Background(), runID, sessionID, work, snapshot, worker.In{
 		T: "turn.start", Phase: "plan",
 	}); err != nil {
 		t.Fatal(err)
@@ -233,19 +233,19 @@ func (errStartWorker) Done(string) {}
 
 func TestInterruptRecoverUnchanged(t *testing.T) {
 	db := testdb.Open(t)
-	sess := testdb.InsertSession(t, db)
+	sessionID := testdb.InsertSession(t, db)
 	runID := ids.New()
-	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running','')`, runID, sess); err != nil {
+	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'running','')`, runID, sessionID); err != nil {
 		t.Fatal(err)
 	}
 	w := &recWorker{}
-	svc := NewService(db, event.NewStore(db))
-	svc.Worker = w
+	runService := NewService(db, event.NewStore(db))
+	runService.Worker = w
 	waitID := ids.New()
-	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'waiting_approval','')`, waitID, sess); err != nil {
+	if _, err := db.Exec(`INSERT INTO runs(id,session_id,status,workspace_dir) VALUES($1,$2,'waiting_approval','')`, waitID, sessionID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Recover(context.Background()); err != nil {
+	if err := runService.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus(t, db, runID) != StatusInterrupted {

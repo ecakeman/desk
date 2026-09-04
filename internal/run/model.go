@@ -20,164 +20,164 @@ func slotOf(phase string) string {
 }
 
 // applySlot 按 phase 填 Worker 的模型槽位与 API 地址。
-func (s *Service) applySlot(in *worker.In) {
-	cfg := s.Flash
-	in.Model = "flash"
-	if in.Phase == "plan" || in.Phase == "review" {
-		cfg = s.Pro
-		in.Model = "pro"
+func (service *Service) applySlot(workerInput *worker.In) {
+	modelSlot := service.Flash
+	workerInput.Model = "flash"
+	if workerInput.Phase == "plan" || workerInput.Phase == "review" {
+		modelSlot = service.Pro
+		workerInput.Model = "pro"
 	}
-	if in.Phase == "" {
-		in.Phase = "act"
+	if workerInput.Phase == "" {
+		workerInput.Phase = "act"
 	}
-	in.APIModel = cfg.Model
-	in.BaseURL = cfg.BaseURL
-	in.APIKey = cfg.APIKey
+	workerInput.APIModel = modelSlot.Model
+	workerInput.BaseURL = modelSlot.BaseURL
+	workerInput.APIKey = modelSlot.APIKey
 }
 
-func (s *Service) contextMgr() *ctxmgr.Manager {
-	if s.Context == nil {
-		s.Context = ctxmgr.New(s.Events, s.Index, ctxmgr.Settings{
+func (service *Service) contextMgr() *ctxmgr.Manager {
+	if service.Context == nil {
+		service.Context = ctxmgr.New(service.Events, service.Index, ctxmgr.Settings{
 			WindowTokens: 1_000_000,
 			TotalTokens:  3_000_000,
-			PromptsDir:   s.PromptsDir,
+			PromptsDir:   service.PromptsDir,
 		})
 	}
-	if s.Context.Index == nil {
-		s.Context.Index = s.Index
+	if service.Context.Index == nil {
+		service.Context.Index = service.Index
 	}
-	if s.Context.Settings.PromptsDir == "" {
-		s.Context.Settings.PromptsDir = s.PromptsDir
+	if service.Context.Settings.PromptsDir == "" {
+		service.Context.Settings.PromptsDir = service.PromptsDir
 	}
-	return s.Context
+	return service.Context
 }
 
 // ask 一次模型回合：ContextManager 组装权威 snapshot，钉 system，phase 放尾部。
-func (s *Service) ask(ctx context.Context, runID, sessionID, workspace string, snapshot *prompt.Snapshot, in worker.In) (*worker.Out, error) {
-	in.RunID = runID
-	pending := ""
-	if in.T == "tool.result" || in.T == "tool.denied" {
-		pending = in.ID
+func (service *Service) ask(requestContext context.Context, runID, sessionID, workspace string, promptSnapshot *prompt.Snapshot, workerInput worker.In) (*worker.Out, error) {
+	workerInput.RunID = runID
+	pendingToolID := ""
+	if workerInput.T == "tool.result" || workerInput.T == "tool.denied" {
+		pendingToolID = workerInput.ID
 	}
-	cm := s.contextMgr()
-	var specs []ctxmgr.ToolSpec
-	if s.Plugins != nil && snapshot != nil {
-		for _, t := range snapshot.ApplyTools(s.Plugins.Tools()) {
-			specs = append(specs, ctxmgr.ToolSpec{Name: t.Name, Description: t.Description, Parameters: t.Parameters})
+	contextManager := service.contextMgr()
+	var toolSpecs []ctxmgr.ToolSpec
+	if service.Plugins != nil && promptSnapshot != nil {
+		for _, tool := range promptSnapshot.ApplyTools(service.Plugins.Tools()) {
+			toolSpecs = append(toolSpecs, ctxmgr.ToolSpec{Name: tool.Name, Description: tool.Description, Parameters: tool.Parameters})
 		}
 	}
-	asm, err := cm.Prepare(ctx, ctxmgr.PrepareIn{
+	contextAssembly, err := contextManager.Prepare(requestContext, ctxmgr.PrepareIn{
 		SessionID:    sessionID,
 		RunID:        runID,
 		Workspace:    workspace,
-		Phase:        in.Phase,
-		PromptHash:   snapshot.Hash(),
-		Runtime:      snapshot.Runtime(in.Phase),
-		System:       snapshot.System(),
-		Tools:        specs,
-		PendingTool:  pending,
-		WantRetrieve: in.Phase == "review",
+		Phase:        workerInput.Phase,
+		PromptHash:   promptSnapshot.Hash(),
+		Runtime:      promptSnapshot.Runtime(workerInput.Phase),
+		System:       promptSnapshot.System(),
+		Tools:        toolSpecs,
+		PendingTool:  pendingToolID,
+		WantRetrieve: workerInput.Phase == "review",
 	})
 	if err != nil {
 		return nil, err
 	}
-	if in.T == "turn.start" {
-		in.Messages = asm.Messages
-	} else if asm.Rebuild {
-		replaced := append([]map[string]any{}, asm.Messages...)
-		if rt := snapshot.Runtime(in.Phase); rt != "" {
-			replaced = append(replaced, map[string]any{"role": "user", "content": rt})
+	if workerInput.T == "turn.start" {
+		workerInput.Messages = contextAssembly.Messages
+	} else if contextAssembly.Rebuild {
+		replacedMessages := append([]map[string]any{}, contextAssembly.Messages...)
+		if runtimeText := promptSnapshot.Runtime(workerInput.Phase); runtimeText != "" {
+			replacedMessages = append(replacedMessages, map[string]any{"role": "user", "content": runtimeText})
 		}
-		if _, err := s.Worker.Handle(worker.In{
+		if _, err := service.Worker.Handle(worker.In{
 			T:        "context.replace",
 			RunID:    runID,
-			Messages: replaced,
-			System:   snapshot.System(),
+			Messages: replacedMessages,
+			System:   promptSnapshot.System(),
 		}, nil); err != nil {
 			return nil, err
 		}
-		in.SkipRuntime = true
-		in.Messages = nil
-	} else if in.Phase == "review" && len(asm.Layers.Retrieval) > 0 {
-		in.Messages = asm.Layers.Retrieval
+		workerInput.SkipRuntime = true
+		workerInput.Messages = nil
+	} else if workerInput.Phase == "review" && len(contextAssembly.Layers.Retrieval) > 0 {
+		workerInput.Messages = contextAssembly.Layers.Retrieval
 	}
-	s.applySlot(&in)
-	in.System = snapshot.System()
-	in.Runtime = snapshot.Runtime(in.Phase)
-	in.PromptHash = snapshot.Hash()
-	if in.SkipRuntime {
-		in.Runtime = ""
+	service.applySlot(&workerInput)
+	workerInput.System = promptSnapshot.System()
+	workerInput.Runtime = promptSnapshot.Runtime(workerInput.Phase)
+	workerInput.PromptHash = promptSnapshot.Hash()
+	if workerInput.SkipRuntime {
+		workerInput.Runtime = ""
 	}
-	out, err := s.Worker.Handle(in, func(out worker.Out) error {
-		if out.T == "model.usage" {
-			_, err := s.appendOne(ctx, runID, event.TypeModelUsage, map[string]any{
-				"model":         in.Model,
-				"api_model":     in.APIModel,
-				"phase":         in.Phase,
-				"prompt_hash":   in.PromptHash,
-				"input_tokens":  out.InputTokens,
-				"output_tokens": out.OutputTokens,
-				"cached_tokens": out.CachedTokens,
+	workerOutput, err := service.Worker.Handle(workerInput, func(streamedOutput worker.Out) error {
+		if streamedOutput.T == "model.usage" {
+			_, err := service.appendOne(requestContext, runID, event.TypeModelUsage, map[string]any{
+				"model":         workerInput.Model,
+				"api_model":     workerInput.APIModel,
+				"phase":         workerInput.Phase,
+				"prompt_hash":   workerInput.PromptHash,
+				"input_tokens":  streamedOutput.InputTokens,
+				"output_tokens": streamedOutput.OutputTokens,
+				"cached_tokens": streamedOutput.CachedTokens,
 			})
 			return err
 		}
-		if out.T != "message.delta" || out.Text == "" {
+		if streamedOutput.T != "message.delta" || streamedOutput.Text == "" {
 			return nil
 		}
-		_, err := s.appendOne(ctx, runID, event.TypeMessageDelta, map[string]string{
-			"text":        out.Text,
-			"model":       in.Model,
-			"phase":       in.Phase,
-			"prompt_hash": in.PromptHash,
+		_, err := service.appendOne(requestContext, runID, event.TypeMessageDelta, map[string]string{
+			"text":        streamedOutput.Text,
+			"model":       workerInput.Model,
+			"phase":       workerInput.Phase,
+			"prompt_hash": workerInput.PromptHash,
 		})
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	applied := asm.Applied
-	applied.SkipRuntime = in.SkipRuntime
-	if _, err := s.appendOne(ctx, runID, event.TypeContextApplied, applied); err != nil {
+	appliedContext := contextAssembly.Applied
+	appliedContext.SkipRuntime = workerInput.SkipRuntime
+	if _, err := service.appendOne(requestContext, runID, event.TypeContextApplied, appliedContext); err != nil {
 		return nil, err
 	}
-	if len(asm.Applied.Retrieval) > 0 {
-		brief := make([]map[string]any, 0, len(asm.Applied.Retrieval))
-		for _, h := range asm.Applied.Retrieval {
-			brief = append(brief, map[string]any{"run_id": h.RunID, "seq": h.Seq, "kind": h.Kind})
+	if len(contextAssembly.Applied.Retrieval) > 0 {
+		retrievalBrief := make([]map[string]any, 0, len(contextAssembly.Applied.Retrieval))
+		for _, memoryHit := range contextAssembly.Applied.Retrieval {
+			retrievalBrief = append(retrievalBrief, map[string]any{"run_id": memoryHit.RunID, "seq": memoryHit.Seq, "kind": memoryHit.Kind})
 		}
-		_, _ = s.appendOne(ctx, runID, event.TypeMemoryRetrieved, map[string]any{
-			"phase": in.Phase,
-			"hits":  brief,
+		_, _ = service.appendOne(requestContext, runID, event.TypeMemoryRetrieved, map[string]any{
+			"phase": workerInput.Phase,
+			"hits":  retrievalBrief,
 		})
 	}
-	if in.Phase == "review" {
-		if _, err := s.appendOne(ctx, runID, event.TypeReviewCompleted, map[string]any{
-			"model":       in.Model,
-			"phase":       in.Phase,
-			"summary":     reviewSummary(out),
-			"continue":    out.T == "tool.request",
-			"prompt_hash": in.PromptHash,
+	if workerInput.Phase == "review" {
+		if _, err := service.appendOne(requestContext, runID, event.TypeReviewCompleted, map[string]any{
+			"model":       workerInput.Model,
+			"phase":       workerInput.Phase,
+			"summary":     reviewSummary(workerOutput),
+			"continue":    workerOutput.T == "tool.request",
+			"prompt_hash": workerInput.PromptHash,
 		}); err != nil {
 			return nil, err
 		}
 	}
-	return out, nil
+	return workerOutput, nil
 }
 
-func reviewSummary(out *worker.Out) string {
-	if out == nil {
+func reviewSummary(workerOutput *worker.Out) string {
+	if workerOutput == nil {
 		return "review returned no result"
 	}
 	var summary string
-	switch out.T {
+	switch workerOutput.T {
 	case "tool.request":
-		summary = "continue with " + out.Name
+		summary = "continue with " + workerOutput.Name
 	case "turn.finish":
-		summary = out.Text
+		summary = workerOutput.Text
 	case "turn.fail":
-		summary = out.Error
+		summary = workerOutput.Error
 	default:
-		summary = out.T
+		summary = workerOutput.T
 	}
 	summary = strings.TrimSpace(summary)
 	if utf8.RuneCountInString(summary) > 240 {
@@ -187,6 +187,6 @@ func reviewSummary(out *worker.Out) string {
 }
 
 // InspectContext 进程内 assembled，否则从 context.applied 重建（非 byte replay）。
-func (s *Service) InspectContext(ctx context.Context, sessionID, runID string) (ctxmgr.Assembly, string, bool) {
-	return s.contextMgr().Inspect(ctx, sessionID, runID)
+func (service *Service) InspectContext(requestContext context.Context, sessionID, runID string) (ctxmgr.Assembly, string, bool) {
+	return service.contextMgr().Inspect(requestContext, sessionID, runID)
 }

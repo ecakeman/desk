@@ -17,17 +17,17 @@ import (
 func TestRuntimeContractShowcase(t *testing.T) {
 	work := t.TempDir()
 	w := &recWorker{fn: showcaseScript}
-	svc, db := contractEnv(t, w, work)
-	sess := testdb.InsertSession(t, db)
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
 
-	r1 := postWait(t, svc, db, sess, "baseline bookmark-lab", work, StatusCompleted)
+	r1 := postWait(t, runService, db, sessionID, "baseline bookmark-lab", work, StatusCompleted)
 	assertEventConsistency(t, db, r1)
 	if !hasType(loadEvents(t, db, r1), event.TypeTaskUpdated) {
 		t.Fatal("run 1 must create a task")
 	}
 
-	r2 := postWait(t, svc, db, sess, "change read-later", work, StatusWaitingApproval)
-	if err := svc.Decide(context.Background(), r2, requestedSeq(t, db, r2), true); err != nil {
+	r2 := postWait(t, runService, db, sessionID, "change read-later", work, StatusWaitingApproval)
+	if err := runService.Decide(context.Background(), r2, requestedSeq(t, db, r2), true); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, r2, StatusCompleted)
@@ -37,7 +37,7 @@ func TestRuntimeContractShowcase(t *testing.T) {
 		t.Fatalf("notes.md=%q err=%v", b, err)
 	}
 
-	r3 := postWait(t, svc, db, sess, "history kebab-case", work, StatusCompleted)
+	r3 := postWait(t, runService, db, sessionID, "history kebab-case", work, StatusCompleted)
 	assertEventConsistency(t, db, r3)
 	if !hasType(loadEvents(t, db, r3), event.TypeToolCompleted) {
 		t.Fatal("run 3 must complete memory.search")
@@ -46,11 +46,11 @@ func TestRuntimeContractShowcase(t *testing.T) {
 		t.Fatal("run 3 must retrieve prior session facts")
 	}
 
-	r4 := postWait(t, svc, db, sess, "closeout", work, StatusCompleted)
+	r4 := postWait(t, runService, db, sessionID, "closeout", work, StatusCompleted)
 	assertEventConsistency(t, db, r4)
 
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM runs WHERE session_id=$1`, sess).Scan(&n); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM runs WHERE session_id=$1`, sessionID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 4 {
@@ -66,7 +66,7 @@ func TestRuntimeContractShowcase(t *testing.T) {
 		}
 	}
 
-	msgs, err := svc.Events.Messages(context.Background(), sess, r4)
+	msgs, err := runService.Events.Messages(context.Background(), sessionID, r4)
 	if err != nil {
 		t.Fatal(err)
 	}

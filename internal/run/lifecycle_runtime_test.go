@@ -19,9 +19,9 @@ func TestRuntimeContractLifecycle(t *testing.T) {
 		return &worker.Out{T: "turn.finish", Text: "done"}
 	}}
 	work := t.TempDir()
-	svc, db := contractEnv(t, w, work)
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "hello", work, StatusCompleted)
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "hello", work, StatusCompleted)
 	events := loadEvents(t, db, runID)
 	if !hasType(events, event.TypeRunCreated) || !hasType(events, event.TypeMessageUser) {
 		t.Fatalf("missing start events: %v", typesOf(events))
@@ -53,9 +53,9 @@ func TestRuntimeContractToolLifecycle(t *testing.T) {
 		return &worker.Out{T: "turn.finish", Text: "used ping"}
 	}}
 	work := t.TempDir()
-	svc, db := contractEnv(t, w, work)
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "ping", work, StatusCompleted)
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "ping", work, StatusCompleted)
 	events := loadEvents(t, db, runID)
 	if !hasType(events, event.TypeToolRequested) || !hasType(events, event.TypeToolStarted) || !hasType(events, event.TypeToolCompleted) {
 		t.Fatalf("incomplete tool chain: %v", typesOf(events))
@@ -102,10 +102,10 @@ func TestRuntimeContractToolFailure(t *testing.T) {
 		return &worker.Out{T: "turn.finish", Text: "should-not"}
 	}}
 	work := t.TempDir()
-	svc, db := contractEnv(t, w, work)
-	svc.Plugins.Put(boomPlugin{})
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "explode", work, StatusFailed)
+	runService, db := contractEnv(t, w, work)
+	runService.Plugins.Put(boomPlugin{})
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "explode", work, StatusFailed)
 	events := loadEvents(t, db, runID)
 	if !hasType(events, event.TypeToolRequested) || !hasType(events, event.TypeToolStarted) || !hasType(events, event.TypeToolFailed) {
 		t.Fatalf("incomplete fail chain: %v", typesOf(events))
@@ -139,12 +139,12 @@ func TestRuntimeContractApprovalReject(t *testing.T) {
 		}
 		return &worker.Out{T: "turn.finish", Text: "denied"}
 	}}
-	svc, db := contractEnv(t, w, work)
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "write", work, StatusWaitingApproval)
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "write", work, StatusWaitingApproval)
 	assertEventConsistency(t, db, runID)
 	seq := requestedSeq(t, db, runID)
-	if err := svc.Decide(context.Background(), runID, seq, false); err != nil {
+	if err := runService.Decide(context.Background(), runID, seq, false); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusCompleted)
@@ -181,11 +181,11 @@ func TestRuntimeContractApprovalAllow(t *testing.T) {
 		}
 		return &worker.Out{T: "turn.finish", Text: "wrote"}
 	}}
-	svc, db := contractEnv(t, w, work)
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "write", work, StatusWaitingApproval)
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "write", work, StatusWaitingApproval)
 	seq := requestedSeq(t, db, runID)
-	if err := svc.Decide(context.Background(), runID, seq, true); err != nil {
+	if err := runService.Decide(context.Background(), runID, seq, true); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusCompleted)
@@ -219,20 +219,20 @@ func TestRuntimeContractCancel(t *testing.T) {
 		}
 		return &worker.Out{T: "turn.finish", Text: "should-not"}
 	}}
-	svc, db := contractEnv(t, w, work)
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "write", work, StatusWaitingApproval)
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "write", work, StatusWaitingApproval)
 	before := loadEvents(t, db, runID)
 	cancelFrom := runStatus(t, db, runID)
 	maxBefore := 0
 	if len(before) > 0 {
 		maxBefore = before[len(before)-1].Seq
 	}
-	if err := svc.Cancel(runID); err != nil {
+	if err := runService.Cancel(runID); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusInterrupted)
-	if err := svc.Cancel(runID); err != ErrNotWaiting {
+	if err := runService.Cancel(runID); err != ErrNotWaiting {
 		t.Fatalf("duplicate cancel: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(work, "late.txt")); !os.IsNotExist(err) {
@@ -263,13 +263,13 @@ func TestRuntimeContractCancel(t *testing.T) {
 
 func TestRuntimeContractEventConsistency(t *testing.T) {
 	work := t.TempDir()
-	svc, db := contractEnv(t, &recWorker{}, work)
-	sess := testdb.InsertSession(t, db)
+	runService, db := contractEnv(t, &recWorker{}, work)
+	sessionID := testdb.InsertSession(t, db)
 
-	completed := postWait(t, svc, db, sess, "plain", work, StatusCompleted)
+	completed := postWait(t, runService, db, sessionID, "plain", work, StatusCompleted)
 	assertEventConsistency(t, db, completed)
 
-	svc.Worker = &recWorker{fn: func(in worker.In) *worker.Out {
+	runService.Worker = &recWorker{fn: func(in worker.In) *worker.Out {
 		if in.T == "turn.start" {
 			return &worker.Out{
 				T: "tool.request", ID: "w1", Name: "fs.write",
@@ -278,20 +278,20 @@ func TestRuntimeContractEventConsistency(t *testing.T) {
 		}
 		return &worker.Out{T: "turn.finish", Text: "ok"}
 	}}
-	waiting := postWait(t, svc, db, sess, "wait", work, StatusWaitingApproval)
+	waiting := postWait(t, runService, db, sessionID, "wait", work, StatusWaitingApproval)
 	assertEventConsistency(t, db, waiting)
 
-	svc.Worker = crashStub{}
-	failed := postWait(t, svc, db, sess, "crash", work, StatusFailed)
+	runService.Worker = crashStub{}
+	failed := postWait(t, runService, db, sessionID, "crash", work, StatusFailed)
 	assertEventConsistency(t, db, failed)
 
-	svc.Worker = sleepStub{}
-	runID, err := svc.PostUserMessage(context.Background(), sess, "sleep", work)
+	runService.Worker = sleepStub{}
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "sleep", work)
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusRunning)
-	if err := svc.Cancel(runID); err != nil {
+	if err := runService.Cancel(runID); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusInterrupted)

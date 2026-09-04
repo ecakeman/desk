@@ -21,40 +21,40 @@ type toolFailedError struct{ msg string }
 func (e toolFailedError) Error() string { return e.msg }
 
 // runTool 走 tool.requested → 批准 → plugin.Exec → completed/denied/failed。
-func (s *Service) runTool(ctx context.Context, runID, phase string, req *worker.Out) (json.RawMessage, error) {
-	seq, err := s.appendOne(ctx, runID, event.TypeToolRequested, map[string]any{
-		"id": req.ID, "name": req.Name, "args": req.Args,
+func (service *Service) runTool(requestContext context.Context, runID, phase string, toolRequest *worker.Out) (json.RawMessage, error) {
+	seq, err := service.appendOne(requestContext, runID, event.TypeToolRequested, map[string]any{
+		"id": toolRequest.ID, "name": toolRequest.Name, "args": toolRequest.Args,
 		"model": slotOf(phase), "phase": phase,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if req.Name == "fs.write" {
-		path, _ := req.Args["path"].(string)
+	if toolRequest.Name == "fs.write" {
+		path, _ := toolRequest.Args["path"].(string)
 		if skill.IsRel(path) {
 			if phase != "review" {
-				return s.denyTool(ctx, runID, seq, phase, req, "skill_write_requires_review")
+				return service.denyTool(requestContext, runID, seq, phase, toolRequest, "skill_write_requires_review")
 			}
-			revised, err := s.Events.HasSkillRevision(ctx, runID, path)
+			revised, err := service.Events.HasSkillRevision(requestContext, runID, path)
 			if err != nil {
 				return nil, err
 			}
 			if revised {
-				return s.denyTool(ctx, runID, seq, phase, req, "skill_already_revised")
+				return service.denyTool(requestContext, runID, seq, phase, toolRequest, "skill_already_revised")
 			}
 		}
 	}
-	switch approve.Decide(toolRisk(s.Plugins, req.Name)) {
+	switch approve.Decide(toolRisk(service.Plugins, toolRequest.Name)) {
 	case approve.Deny:
-		return s.denyTool(ctx, runID, seq, phase, req, "policy")
+		return service.denyTool(requestContext, runID, seq, phase, toolRequest, "policy")
 	case approve.Ask:
-		allow, err := s.waitDecision(ctx, runID, seq)
+		allow, err := service.waitDecision(requestContext, runID, seq)
 		if err != nil {
 			return nil, err
 		}
 		if !allow {
-			if _, err := s.appendOne(ctx, runID, event.TypeToolDenied, map[string]any{
-				"id": req.ID, "seq": seq, "name": req.Name,
+			if _, err := service.appendOne(requestContext, runID, event.TypeToolDenied, map[string]any{
+				"id": toolRequest.ID, "seq": seq, "name": toolRequest.Name,
 				"model": slotOf(phase), "phase": phase, "reason": "user",
 			}); err != nil {
 				return nil, err
@@ -62,20 +62,20 @@ func (s *Service) runTool(ctx context.Context, runID, phase string, req *worker.
 			return nil, errDenied
 		}
 	}
-	plug, op, err := splitTool(req.Name)
+	pluginName, operationName, err := splitTool(toolRequest.Name)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.appendOne(ctx, runID, event.TypeToolStarted, map[string]string{
-		"id": req.ID, "name": req.Name, "model": slotOf(phase), "phase": phase,
+	if _, err := service.appendOne(requestContext, runID, event.TypeToolStarted, map[string]string{
+		"id": toolRequest.ID, "name": toolRequest.Name, "model": slotOf(phase), "phase": phase,
 	}); err != nil {
 		return nil, err
 	}
-	pluginCtx := plugin.WithPhase(plugin.WithRunID(ctx, runID), phase)
-	data, err := s.Plugins.Exec(pluginCtx, plug, op, req.Args)
+	pluginContext := plugin.WithPhase(plugin.WithRunID(requestContext, runID), phase)
+	toolResult, err := service.Plugins.Exec(pluginContext, pluginName, operationName, toolRequest.Args)
 	if err != nil {
-		if _, appendErr := s.appendOne(ctx, runID, event.TypeToolFailed, map[string]any{
-			"id": req.ID, "name": req.Name, "error": err.Error(),
+		if _, appendErr := service.appendOne(requestContext, runID, event.TypeToolFailed, map[string]any{
+			"id": toolRequest.ID, "name": toolRequest.Name, "error": err.Error(),
 			"model": slotOf(phase), "phase": phase,
 		}); appendErr != nil {
 			return nil, appendErr
@@ -88,33 +88,33 @@ func (s *Service) runTool(ctx context.Context, runID, phase string, req *worker.
 		Data  json.RawMessage `json:"data"`
 		Model string          `json:"model"`
 		Phase string          `json:"phase"`
-	}{ID: req.ID, Name: req.Name, Data: data, Model: slotOf(phase), Phase: phase}
-	doneSeq, err := s.appendOne(ctx, runID, event.TypeToolCompleted, payload)
+	}{ID: toolRequest.ID, Name: toolRequest.Name, Data: toolResult, Model: slotOf(phase), Phase: phase}
+	doneSeq, err := service.appendOne(requestContext, runID, event.TypeToolCompleted, payload)
 	if err != nil {
 		return nil, err
 	}
-	if req.Name == "fs.write" {
-		path, _ := req.Args["path"].(string)
-		content, _ := req.Args["content"].(string)
-		if revision, ok := skill.NewRevision(path, content, doneSeq); ok {
-			if _, err := s.appendOne(ctx, runID, event.TypeSkillRevised, revision); err != nil {
+	if toolRequest.Name == "fs.write" {
+		path, _ := toolRequest.Args["path"].(string)
+		content, _ := toolRequest.Args["content"].(string)
+		if skillRevision, ok := skill.NewRevision(path, content, doneSeq); ok {
+			if _, err := service.appendOne(requestContext, runID, event.TypeSkillRevised, skillRevision); err != nil {
 				return nil, err
 			}
 		}
 	}
-	return data, nil
+	return toolResult, nil
 }
 
-func (s *Service) denyTool(
-	ctx context.Context,
+func (service *Service) denyTool(
+	requestContext context.Context,
 	runID string,
 	seq int,
 	phase string,
-	req *worker.Out,
+	toolRequest *worker.Out,
 	reason string,
 ) (json.RawMessage, error) {
-	if _, err := s.appendOne(ctx, runID, event.TypeToolDenied, map[string]any{
-		"id": req.ID, "seq": seq, "name": req.Name, "reason": reason,
+	if _, err := service.appendOne(requestContext, runID, event.TypeToolDenied, map[string]any{
+		"id": toolRequest.ID, "seq": seq, "name": toolRequest.Name, "reason": reason,
 		"model": slotOf(phase), "phase": phase,
 	}); err != nil {
 		return nil, err
@@ -123,11 +123,11 @@ func (s *Service) denyTool(
 }
 
 func splitTool(name string) (string, string, error) {
-	plug, op, ok := strings.Cut(name, ".")
-	if !ok || plug == "" || op == "" {
+	pluginName, operationName, ok := strings.Cut(name, ".")
+	if !ok || pluginName == "" || operationName == "" {
 		return "", "", fmt.Errorf("bad_tool: %s", name)
 	}
-	return plug, op, nil
+	return pluginName, operationName, nil
 }
 
 func toolRisk(registry *plugin.Registry, name string) string {

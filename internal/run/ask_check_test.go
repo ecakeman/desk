@@ -19,8 +19,8 @@ import (
 
 type writeStub struct{}
 
-func (writeStub) Handle(in worker.In, _ func(worker.Out) error) (*worker.Out, error) {
-	switch in.T {
+func (writeStub) Handle(workerInput worker.In, _ func(worker.Out) error) (*worker.Out, error) {
+	switch workerInput.T {
 	case "context.replace":
 		return &worker.Out{T: "context.replaced"}, nil
 	case "turn.start":
@@ -54,11 +54,11 @@ func askEnv(t *testing.T) (*Service, *sql.DB, string) {
 		t.Fatal(err)
 	}
 	ev := event.NewStore(db)
-	svc := NewService(db, ev)
-	svc.Plugins = reg
-	svc.Worker = writeStub{}
-	svc.PromptsDir = filepath.Join(root, "prompts")
-	return svc, db, work
+	runService := NewService(db, ev)
+	runService.Plugins = reg
+	runService.Worker = writeStub{}
+	runService.PromptsDir = filepath.Join(root, "prompts")
+	return runService, db, work
 }
 
 func waitStatus(t *testing.T, db *sql.DB, runID, want string) {
@@ -77,11 +77,11 @@ func waitStatus(t *testing.T, db *sql.DB, runID, want string) {
 	t.Fatalf("status want %s", want)
 }
 
-func postRun(t *testing.T, svc *Service, db *sql.DB, work string) string {
+func postRun(t *testing.T, runService *Service, db *sql.DB, work string) string {
 	t.Helper()
 	ctx := context.Background()
-	sess := testdb.InsertSession(t, db)
-	runID, err := svc.PostUserMessage(ctx, sess, "write", work)
+	sessionID := testdb.InsertSession(t, db)
+	runID, err := runService.PostUserMessage(ctx, sessionID, "write", work)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +103,10 @@ func requestedSeq(t *testing.T, db *sql.DB, runID string) int {
 }
 
 func TestAskBadSeqDoesNotWrite(t *testing.T) {
-	svc, db, work := askEnv(t)
-	runID := postRun(t, svc, db, work)
+	runService, db, work := askEnv(t)
+	runID := postRun(t, runService, db, work)
 	pendingSeq := requestedSeq(t, db, runID)
-	err := svc.Decide(context.Background(), runID, 999, true)
+	err := runService.Decide(context.Background(), runID, 999, true)
 	if err != ErrBadSeq {
 		t.Fatalf("err=%v", err)
 	}
@@ -114,21 +114,21 @@ func TestAskBadSeqDoesNotWrite(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(work, "d12.txt")); !os.IsNotExist(err) {
 		t.Fatalf("file exists: %v", err)
 	}
-	if err := svc.Decide(context.Background(), runID, pendingSeq, false); err != nil {
+	if err := runService.Decide(context.Background(), runID, pendingSeq, false); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusCompleted)
 }
 
 func TestAskOnlyAcceptsPendingRequestSeq(t *testing.T) {
-	svc, db, work := askEnv(t)
-	runID := postRun(t, svc, db, work)
+	runService, db, work := askEnv(t)
+	runID := postRun(t, runService, db, work)
 	pendingSeq := requestedSeq(t, db, runID)
 	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherSeq, err := svc.Events.Append(context.Background(), tx, runID, event.TypeToolRequested, map[string]any{
+	otherSeq, err := runService.Events.Append(context.Background(), tx, runID, event.TypeToolRequested, map[string]any{
 		"id": "other", "name": "fs.write",
 	})
 	if err != nil {
@@ -137,11 +137,11 @@ func TestAskOnlyAcceptsPendingRequestSeq(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Decide(context.Background(), runID, otherSeq, true); err != ErrNotWaiting {
+	if err := runService.Decide(context.Background(), runID, otherSeq, true); err != ErrNotWaiting {
 		t.Fatalf("err=%v", err)
 	}
 	waitStatus(t, db, runID, StatusWaitingApproval)
-	if err := svc.Decide(context.Background(), runID, pendingSeq, false); err != nil {
+	if err := runService.Decide(context.Background(), runID, pendingSeq, false); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusCompleted)
@@ -151,10 +151,10 @@ func TestAskOnlyAcceptsPendingRequestSeq(t *testing.T) {
 }
 
 func TestAskDenyNoFile(t *testing.T) {
-	svc, db, work := askEnv(t)
-	runID := postRun(t, svc, db, work)
+	runService, db, work := askEnv(t)
+	runID := postRun(t, runService, db, work)
 	seq := requestedSeq(t, db, runID)
-	if err := svc.Decide(context.Background(), runID, seq, false); err != nil {
+	if err := runService.Decide(context.Background(), runID, seq, false); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusCompleted)
@@ -174,10 +174,10 @@ func TestAskDenyNoFile(t *testing.T) {
 }
 
 func TestAskAllowWrites(t *testing.T) {
-	svc, db, work := askEnv(t)
-	runID := postRun(t, svc, db, work)
+	runService, db, work := askEnv(t)
+	runID := postRun(t, runService, db, work)
 	seq := requestedSeq(t, db, runID)
-	if err := svc.Decide(context.Background(), runID, seq, true); err != nil {
+	if err := runService.Decide(context.Background(), runID, seq, true); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusCompleted)

@@ -37,21 +37,21 @@ func (u contextUnit) tokens() int {
 }
 
 func flattenUnits(units []contextUnit) []windowItem {
-	var out []windowItem
-	for _, u := range units {
-		out = append(out, u.Items...)
+	var flattened []windowItem
+	for _, windowUnit := range units {
+		flattened = append(flattened, windowUnit.Items...)
 	}
-	return out
+	return flattened
 }
 
 func unitMsgs(units []contextUnit) []map[string]any {
-	var out []map[string]any
-	for _, u := range units {
-		for _, it := range u.Items {
-			out = append(out, it.Msg)
+	var messages []map[string]any
+	for _, windowUnit := range units {
+		for _, unitItem := range windowUnit.Items {
+			messages = append(messages, unitItem.Msg)
 		}
 	}
-	return out
+	return messages
 }
 
 func parseLayers(events []event.Event, currentRun, pendingToolID string) layer {
@@ -253,7 +253,7 @@ func skipped(skip map[string]map[int]bool, runID string, seq int) bool {
 }
 
 func buildUnits(events []event.Event, currentRun, pendingToolID string, skip map[string]map[int]bool) []contextUnit {
-	var out []contextUnit
+	var windowUnits []contextUnit
 	type req struct {
 		id   string
 		name string
@@ -261,12 +261,12 @@ func buildUnits(events []event.Event, currentRun, pendingToolID string, skip map
 		seq  int
 		run  string
 	}
-	pending := map[string]req{}
-	normal := func(e event.Event, msg map[string]any) {
-		out = append(out, contextUnit{
+	pendingToolRequests := map[string]req{}
+	normal := func(runEvent event.Event, msg map[string]any) {
+		windowUnits = append(windowUnits, contextUnit{
 			Kind: "normal",
 			Items: []windowItem{{
-				Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
+				Ref: SourceRef{RunID: runEvent.RunID, Seq: runEvent.Seq},
 				Msg: msg,
 			}},
 		})
@@ -328,7 +328,7 @@ func buildUnits(events []event.Event, currentRun, pendingToolID string, skip map
 				continue
 			}
 			id, name, args := toolHead(e.Payload)
-			pending[id] = req{id: id, name: name, args: args, seq: e.Seq, run: e.RunID}
+			pendingToolRequests[id] = req{id: id, name: name, args: args, seq: e.Seq, run: e.RunID}
 		case event.TypeToolCompleted, event.TypeToolDenied, event.TypeToolFailed:
 			if skipped(skip, e.RunID, e.Seq) {
 				continue
@@ -350,35 +350,35 @@ func buildUnits(events []event.Event, currentRun, pendingToolID string, skip map
 				})
 				continue
 			}
-			r := pending[id]
-			asst := windowItem{Ref: SourceRef{RunID: r.run, Seq: r.seq}, Msg: assistantTool(r.id, r.name, r.args)}
+			pendingToolRequest := pendingToolRequests[id]
+			assistantItem := windowItem{Ref: SourceRef{RunID: pendingToolRequest.run, Seq: pendingToolRequest.seq}, Msg: assistantTool(pendingToolRequest.id, pendingToolRequest.name, pendingToolRequest.args)}
 			if id == pendingToolID {
-				out = append(out, contextUnit{Kind: "tool", Pending: true, Items: []windowItem{asst}})
-				delete(pending, id)
+				windowUnits = append(windowUnits, contextUnit{Kind: "tool", Pending: true, Items: []windowItem{assistantItem}})
+				delete(pendingToolRequests, id)
 				continue
 			}
-			res := windowItem{
+			toolResultItem := windowItem{
 				Ref: SourceRef{RunID: e.RunID, Seq: e.Seq},
 				Msg: map[string]any{"role": "tool", "tool_call_id": id, "content": toolBody(e)},
 			}
-			out = append(out, contextUnit{Kind: "tool", Items: []windowItem{asst, res}})
-			delete(pending, id)
+			windowUnits = append(windowUnits, contextUnit{Kind: "tool", Items: []windowItem{assistantItem, toolResultItem}})
+			delete(pendingToolRequests, id)
 			_ = name
 		}
 	}
 	if pendingToolID != "" {
-		if r, ok := pending[pendingToolID]; ok {
-			out = append(out, contextUnit{
+		if pendingToolRequest, ok := pendingToolRequests[pendingToolID]; ok {
+			windowUnits = append(windowUnits, contextUnit{
 				Kind:    "tool",
 				Pending: true,
 				Items: []windowItem{{
-					Ref: SourceRef{RunID: r.run, Seq: r.seq},
-					Msg: assistantTool(r.id, r.name, r.args),
+					Ref: SourceRef{RunID: pendingToolRequest.run, Seq: pendingToolRequest.seq},
+					Msg: assistantTool(pendingToolRequest.id, pendingToolRequest.name, pendingToolRequest.args),
 				}},
 			})
 		}
 	}
-	return out
+	return windowUnits
 }
 
 func toolHead(raw json.RawMessage) (id, name string, args map[string]any) {

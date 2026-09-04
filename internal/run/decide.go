@@ -23,22 +23,22 @@ type pendingApproval struct {
 }
 
 // waitDecision 把 Run 切到 waiting_approval，只接受这一次 seq 的 Decide。
-func (s *Service) waitDecision(ctx context.Context, runID string, seq int) (bool, error) {
-	ch := make(chan bool, 1)
-	s.mu.Lock()
-	s.pending[runID] = &pendingApproval{seq: seq, ch: ch}
-	s.mu.Unlock()
+func (service *Service) waitDecision(requestContext context.Context, runID string, seq int) (bool, error) {
+	decisionChannel := make(chan bool, 1)
+	service.mu.Lock()
+	service.pending[runID] = &pendingApproval{seq: seq, ch: decisionChannel}
+	service.mu.Unlock()
 	defer func() {
-		s.mu.Lock()
-		delete(s.pending, runID)
-		s.mu.Unlock()
+		service.mu.Lock()
+		delete(service.pending, runID)
+		service.mu.Unlock()
 	}()
 
-	tx, err := s.DB.BeginTx(ctx, nil)
+	tx, err := service.DB.BeginTx(requestContext, nil)
 	if err != nil {
 		return false, err
 	}
-	if err := Transition(ctx, tx, runID, StatusRunning, StatusWaitingApproval); err != nil {
+	if err := Transition(requestContext, tx, runID, StatusRunning, StatusWaitingApproval); err != nil {
 		_ = tx.Rollback()
 		return false, err
 	}
@@ -47,12 +47,12 @@ func (s *Service) waitDecision(ctx context.Context, runID string, seq int) (bool
 	}
 
 	select {
-	case allow := <-ch:
-		tx, err := s.DB.BeginTx(ctx, nil)
+	case allow := <-decisionChannel:
+		tx, err := service.DB.BeginTx(requestContext, nil)
 		if err != nil {
 			return false, err
 		}
-		if err := Transition(ctx, tx, runID, StatusWaitingApproval, StatusRunning); err != nil {
+		if err := Transition(requestContext, tx, runID, StatusWaitingApproval, StatusRunning); err != nil {
 			_ = tx.Rollback()
 			return false, err
 		}
@@ -60,40 +60,40 @@ func (s *Service) waitDecision(ctx context.Context, runID string, seq int) (bool
 			return false, err
 		}
 		return allow, nil
-	case <-ctx.Done():
-		return false, ctx.Err()
+	case <-requestContext.Done():
+		return false, requestContext.Err()
 	}
 }
 
 // Decide 消费当前 pending 的那一次批准；seq 必须等于内存里的 pending。
-func (s *Service) Decide(ctx context.Context, runID string, seq int, allow bool) error {
+func (service *Service) Decide(requestContext context.Context, runID string, seq int, allow bool) error {
 	var status string
-	err := s.DB.QueryRowContext(ctx, `SELECT status FROM runs WHERE id=$1`, runID).Scan(&status)
+	err := service.DB.QueryRowContext(requestContext, `SELECT status FROM runs WHERE id=$1`, runID).Scan(&status)
 	if err != nil {
 		return err
 	}
 	if status != StatusWaitingApproval {
 		return ErrNotWaiting
 	}
-	ev, err := s.Events.Get(ctx, runID, seq)
+	runEvent, err := service.Events.Get(requestContext, runID, seq)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrBadSeq
 	}
 	if err != nil {
 		return err
 	}
-	if ev.Type != event.TypeToolRequested {
+	if runEvent.Type != event.TypeToolRequested {
 		return ErrBadSeq
 	}
-	s.mu.Lock()
-	pending, ok := s.pending[runID]
-	s.mu.Unlock()
-	if !ok || pending.seq != seq {
+	service.mu.Lock()
+	waitingApproval, ok := service.pending[runID]
+	service.mu.Unlock()
+	if !ok || waitingApproval.seq != seq {
 		return ErrNotWaiting
 	}
-	if !pending.taken.CompareAndSwap(false, true) {
+	if !waitingApproval.taken.CompareAndSwap(false, true) {
 		return ErrConflict
 	}
-	pending.ch <- allow
+	waitingApproval.ch <- allow
 	return nil
 }

@@ -62,89 +62,89 @@ type PrepareIn struct {
 	FrozenHits   []RetrievalHit
 }
 
-func New(events *event.Store, idx *memory.Index, st Settings) *Manager {
+func New(events *event.Store, memoryIndex *memory.Index, settings Settings) *Manager {
 	return &Manager{
 		Events:   events,
-		Index:    idx,
-		Settings: st.withDefaults(),
+		Index:    memoryIndex,
+		Settings: settings.withDefaults(),
 		last:     map[string]Assembly{},
 		version:  map[string]int{},
 	}
 }
 
 // Prepare 推进 durable window/compact 生命周期，再组装发给 Worker 的 snapshot。
-func (m *Manager) Prepare(ctx context.Context, in PrepareIn) (Assembly, error) {
-	if m == nil || m.Events == nil {
+func (manager *Manager) Prepare(requestContext context.Context, prepareInput PrepareIn) (Assembly, error) {
+	if manager == nil || manager.Events == nil {
 		return Assembly{}, fmt.Errorf("ctxmgr_unconfigured")
 	}
-	st := m.Settings.withDefaults()
+	settings := manager.Settings.withDefaults()
 	reason := ""
 	changed := false
-	if !in.SkipCompact {
-		why, ch, err := m.advanceLifecycle(ctx, in, st)
+	if !prepareInput.SkipCompact {
+		compactionReason, lifecycleChanged, err := manager.advanceLifecycle(requestContext, prepareInput, settings)
 		if err != nil {
 			return Assembly{}, err
 		}
-		reason, changed = why, ch
+		reason, changed = compactionReason, lifecycleChanged
 	}
-	events, err := m.Events.ListBySession(ctx, in.SessionID)
+	events, err := manager.Events.ListBySession(requestContext, prepareInput.SessionID)
 	if err != nil {
 		return Assembly{}, err
 	}
-	layers := parseLayers(events, in.RunID, in.PendingTool)
-	hits := in.FrozenHits
-	if hits == nil {
-		hits = m.retrieve(ctx, in)
+	layers := parseLayers(events, prepareInput.RunID, prepareInput.PendingTool)
+	retrievalHits := prepareInput.FrozenHits
+	if retrievalHits == nil {
+		retrievalHits = manager.retrieve(requestContext, prepareInput)
 	}
-	asm, err := m.assemble(ctx, in, layers, events, hits, st, reason, changed)
+	contextAssembly, err := manager.assemble(requestContext, prepareInput, layers, events, retrievalHits, settings, reason, changed)
 	if err != nil {
 		return Assembly{}, err
 	}
-	if in.SkipCompact {
-		return asm, nil
+	if prepareInput.SkipCompact {
+		return contextAssembly, nil
 	}
-	m.mu.Lock()
-	m.version[in.RunID]++
-	asm.Applied.Version = m.version[in.RunID]
-	m.last[in.RunID] = asm
-	m.mu.Unlock()
-	return asm, nil
+	manager.mu.Lock()
+	manager.version[prepareInput.RunID]++
+	contextAssembly.Applied.Version = manager.version[prepareInput.RunID]
+	manager.last[prepareInput.RunID] = contextAssembly
+	manager.mu.Unlock()
+	return contextAssembly, nil
 }
 
 // Last 返回本 Run 最近一次 Prepare 的组装。
-func (m *Manager) Last(runID string) (Assembly, bool) {
-	if m == nil {
+func (manager *Manager) Last(runID string) (Assembly, bool) {
+	if manager == nil {
 		return Assembly{}, false
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	a, ok := m.last[runID]
-	return a, ok
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	lastAssembly, ok := manager.last[runID]
+	return lastAssembly, ok
 }
 
 // Forget 丢掉进程内 last，供 durable inspect 测试。
-func (m *Manager) Forget(runID string) {
-	if m == nil {
+func (manager *Manager) Forget(runID string) {
+	if manager == nil {
 		return
 	}
-	m.mu.Lock()
-	delete(m.last, runID)
-	m.mu.Unlock()
+	manager.mu.Lock()
+	delete(manager.last, runID)
+	manager.mu.Unlock()
 }
 
 // Inspect 优先进程内 assembled；否则从最后一条 context.applied 重建。
 // reconstructable 不是 byte-for-byte 历史 Prompt 回放：只有 hash 与 applied 元数据，没有 prompt 正文快照。
-func (m *Manager) Inspect(ctx context.Context, sessionID, runID string) (Assembly, string, bool) {
-	if m == nil {
+func (manager *Manager) Inspect(requestContext context.Context, sessionID, runID string) (Assembly, string, bool) {
+	if manager == nil {
 		return Assembly{}, "", false
 	}
-	if a, ok := m.Last(runID); ok {
-		return a, "assembled", true
+	if lastAssembly, ok := manager.Last(runID); ok {
+		return lastAssembly, "assembled", true
 	}
-	if m.Events == nil {
+	if manager.Events == nil {
 		return Assembly{}, "", false
 	}
-	events, err := m.Events.ListBySession(ctx, sessionID)
+	events, err := manager.Events.ListBySession(requestContext, sessionID)
 	if err != nil {
 		return Assembly{}, "", false
 	}
@@ -164,169 +164,169 @@ func (m *Manager) Inspect(ctx context.Context, sessionID, runID string) (Assembl
 	if applied == nil {
 		return Assembly{}, "", false
 	}
-	hits := applied.Retrieval
-	if hits == nil {
-		hits = []RetrievalHit{}
+	retrievalHits := applied.Retrieval
+	if retrievalHits == nil {
+		retrievalHits = []RetrievalHit{}
 	}
-	asm, err := m.Prepare(ctx, PrepareIn{
+	contextAssembly, err := manager.Prepare(requestContext, PrepareIn{
 		SessionID:   sessionID,
 		RunID:       runID,
 		SkipCompact: true,
-		FrozenHits:  hits,
+		FrozenHits:  retrievalHits,
 		PromptHash:  applied.PromptHash,
 	})
 	if err != nil {
 		return Assembly{}, "", false
 	}
-	asm.Applied = *applied
-	return asm, "reconstructable", true
+	contextAssembly.Applied = *applied
+	return contextAssembly, "reconstructable", true
 }
 
-func (m *Manager) advanceLifecycle(ctx context.Context, in PrepareIn, st Settings) (string, bool, error) {
-	events, err := m.Events.ListBySession(ctx, in.SessionID)
+func (manager *Manager) advanceLifecycle(requestContext context.Context, prepareInput PrepareIn, settings Settings) (string, bool, error) {
+	events, err := manager.Events.ListBySession(requestContext, prepareInput.SessionID)
 	if err != nil {
 		return "", false, err
 	}
 	changed := false
-	why := ""
-	hits := in.FrozenHits
-	if hits == nil {
-		hits = m.retrieve(ctx, in)
+	compactionReason := ""
+	retrievalHits := prepareInput.FrozenHits
+	if retrievalHits == nil {
+		retrievalHits = manager.retrieve(requestContext, prepareInput)
 	}
-	userText := firstUser(ctx, m.Events, in.RunID)
-	skills := skill.InjectPaths(in.Workspace, skillPaths(ctx, m, in, userText))
-	ret := []map[string]any{}
-	if rb := retrievalBlock(hits); rb != nil {
-		ret = []map[string]any{rb}
+	userText := firstUser(requestContext, manager.Events, prepareInput.RunID)
+	skills := skill.InjectPaths(prepareInput.Workspace, skillPaths(requestContext, manager, prepareInput, userText))
+	retrievalMessages := []map[string]any{}
+	if retrievalMessage := retrievalBlock(retrievalHits); retrievalMessage != nil {
+		retrievalMessages = []map[string]any{retrievalMessage}
 	}
 	for pass := 0; pass < 6; pass++ {
-		layers := parseLayers(events, in.RunID, in.PendingTool)
+		layers := parseLayers(events, prepareInput.RunID, prepareInput.PendingTool)
 		stable := stableMsgs(layers, true)
-		reserved := reservedTokens(in)
-		dyn := EstimateMessages(skills) + EstimateMessages(ret) + EstimateTokens(in.Runtime)
-		pendingMin := 0
+		reserved := reservedTokens(prepareInput)
+		dynamicTailTokens := EstimateMessages(skills) + EstimateMessages(retrievalMessages) + EstimateTokens(prepareInput.Runtime)
+		pendingToolMinTokens := 0
 		if n := len(layers.window); n > 0 && layers.window[n-1].Pending {
-			pendingMin = layers.window[n-1].tokens()
+			pendingToolMinTokens = layers.window[n-1].tokens()
 		}
-		if reserved+EstimateMessages(stable)+pendingMin+dyn > st.TotalTokens {
-			ok, _, err := m.maybeLarge(ctx, in.RunID, events, st, true)
+		if reserved+EstimateMessages(stable)+pendingToolMinTokens+dynamicTailTokens > settings.TotalTokens {
+			ok, _, err := manager.maybeLarge(requestContext, prepareInput.RunID, events, settings, true)
 			if err != nil {
 				return "", changed, err
 			}
 			if ok {
 				changed = true
-				why = "large_compact"
-				events, err = m.Events.ListBySession(ctx, in.SessionID)
+				compactionReason = "large_compact"
+				events, err = manager.Events.ListBySession(requestContext, prepareInput.SessionID)
 				if err != nil {
-					return why, changed, err
+					return compactionReason, changed, err
 				}
 				continue
 			}
 			stable = stableMsgs(layers, false)
-			if len(ret) > 0 {
-				ret = nil
+			if len(retrievalMessages) > 0 {
+				retrievalMessages = nil
 			} else if len(skills) > 0 {
 				skills = nil
 			}
-			dyn = EstimateMessages(skills) + EstimateMessages(ret) + EstimateTokens(in.Runtime)
+			dynamicTailTokens = EstimateMessages(skills) + EstimateMessages(retrievalMessages) + EstimateTokens(prepareInput.Runtime)
 		}
-		remaining := st.TotalTokens - reserved - EstimateMessages(stable) - dyn
+		remaining := settings.TotalTokens - reserved - EstimateMessages(stable) - dynamicTailTokens
 		if remaining < 0 {
 			remaining = 0
 		}
-		windowBudget := st.WindowTokens
+		windowBudget := settings.WindowTokens
 		if remaining < windowBudget {
 			windowBudget = remaining
 		}
 		progress := false
-		_, newly := splitUnits(layers.window, windowBudget)
-		if len(newly) > 0 {
-			if !m.compactReady(st) {
+		_, newlyEvicted := splitUnits(layers.window, windowBudget)
+		if len(newlyEvicted) > 0 {
+			if !manager.compactReady(settings) {
 				break
 			}
-			if err := m.appendJSON(ctx, in.RunID, event.TypeContextEvicted, EvictPayload{BasedOn: unitRefs(newly)}); err != nil {
-				return why, changed, err
+			if err := manager.appendJSON(requestContext, prepareInput.RunID, event.TypeContextEvicted, EvictPayload{BasedOn: unitRefs(newlyEvicted)}); err != nil {
+				return compactionReason, changed, err
 			}
 			changed = true
 			progress = true
-			if why == "" {
-				why = "window_evict"
+			if compactionReason == "" {
+				compactionReason = "window_evict"
 			}
-			events, err = m.Events.ListBySession(ctx, in.SessionID)
+			events, err = manager.Events.ListBySession(requestContext, prepareInput.SessionID)
 			if err != nil {
-				return why, changed, err
+				return compactionReason, changed, err
 			}
 		}
-		if try, units := m.pendingSmallUnits(events, in.RunID, in.PendingTool, st); try {
-			if err := m.runCompact(ctx, in.RunID, units, 0); err != nil {
-				_ = m.appendJSON(ctx, in.RunID, event.TypeContextCompactFailed, CompactFailPayload{
+		if shouldSmallCompact, units := manager.pendingSmallUnits(events, prepareInput.RunID, prepareInput.PendingTool, settings); shouldSmallCompact {
+			if err := manager.runCompact(requestContext, prepareInput.RunID, units, 0); err != nil {
+				_ = manager.appendJSON(requestContext, prepareInput.RunID, event.TypeContextCompactFailed, CompactFailPayload{
 					Kind: "small", BasedOn: unitRefs(units), Error: err.Error(),
 				})
 				changed = true
 			} else {
-				why = "small_compact"
+				compactionReason = "small_compact"
 				changed = true
 				progress = true
-				events, err = m.Events.ListBySession(ctx, in.SessionID)
+				events, err = manager.Events.ListBySession(requestContext, prepareInput.SessionID)
 				if err != nil {
-					return why, changed, err
+					return compactionReason, changed, err
 				}
 			}
 		}
-		ok, lwhy, err := m.maybeLarge(ctx, in.RunID, events, st, false)
+		ok, largeCompactReason, err := manager.maybeLarge(requestContext, prepareInput.RunID, events, settings, false)
 		if err != nil {
-			return why, changed, err
+			return compactionReason, changed, err
 		}
 		if ok {
 			changed = true
 			progress = true
-			why = lwhy
-			events, err = m.Events.ListBySession(ctx, in.SessionID)
+			compactionReason = largeCompactReason
+			events, err = manager.Events.ListBySession(requestContext, prepareInput.SessionID)
 			if err != nil {
-				return why, changed, err
+				return compactionReason, changed, err
 			}
 		}
 		if !progress {
 			break
 		}
 	}
-	return why, changed, nil
+	return compactionReason, changed, nil
 }
 
-func (m *Manager) compactReady(st Settings) bool {
-	return m != nil && m.Compactor != nil && st.PromptsDir != ""
+func (manager *Manager) compactReady(settings Settings) bool {
+	return manager != nil && manager.Compactor != nil && settings.PromptsDir != ""
 }
 
-func (m *Manager) pendingSmallUnits(events []event.Event, runID, pending string, st Settings) (bool, []contextUnit) {
+func (manager *Manager) pendingSmallUnits(events []event.Event, runID, pendingToolID string, settings Settings) (bool, []contextUnit) {
 	refs := pendingEvictedRefs(events)
 	if len(refs) == 0 {
 		return false, nil
 	}
-	want := allowedMap(refs)
-	unitsAll := buildUnits(events, runID, pending, skipCompacted(events))
-	var picked []contextUnit
-	for _, u := range unitsAll {
+	allowedSources := allowedMap(refs)
+	allWindowUnits := buildUnits(events, runID, pendingToolID, skipCompacted(events))
+	var smallCompactUnits []contextUnit
+	for _, u := range allWindowUnits {
 		for _, it := range u.Items {
-			if _, ok := want[sourceKey(it.Ref)]; ok {
-				picked = append(picked, u)
+			if _, ok := allowedSources[sourceKey(it.Ref)]; ok {
+				smallCompactUnits = append(smallCompactUnits, u)
 				break
 			}
 		}
 	}
-	if EstimateTokens(joinUnits(picked)) < st.SmallTriggerTok {
-		return false, picked
+	if EstimateTokens(joinUnits(smallCompactUnits)) < settings.SmallTriggerTok {
+		return false, smallCompactUnits
 	}
 	if blockedByFail(events, "small") {
-		return false, picked
+		return false, smallCompactUnits
 	}
-	if m.Compactor == nil || st.PromptsDir == "" {
-		return false, picked
+	if manager.Compactor == nil || settings.PromptsDir == "" {
+		return false, smallCompactUnits
 	}
-	return true, picked
+	return true, smallCompactUnits
 }
 
-func (m *Manager) maybeLarge(ctx context.Context, runID string, events []event.Event, st Settings, force bool) (bool, string, error) {
-	if m.Compactor == nil || st.PromptsDir == "" {
+func (manager *Manager) maybeLarge(requestContext context.Context, runID string, events []event.Event, settings Settings, force bool) (bool, string, error) {
+	if manager.Compactor == nil || settings.PromptsDir == "" {
 		return false, "", nil
 	}
 	if blockedByFail(events, "large") {
@@ -336,16 +336,16 @@ func (m *Manager) maybeLarge(ctx context.Context, runID string, events []event.E
 	if len(layers.smalls) == 0 {
 		return false, "", nil
 	}
-	if !force && len(layers.smalls) < st.LargeSmallCount && EstimateTokens(smallsText(layers.smalls)) < st.LargeTriggerTok {
+	if !force && len(layers.smalls) < settings.LargeSmallCount && EstimateTokens(smallsText(layers.smalls)) < settings.LargeTriggerTok {
 		return false, "", nil
 	}
-	maxOut := st.TotalTokens / 3
-	if err := m.runLarge(ctx, runID, layers, maxOut); err != nil {
+	maxOutputTokens := settings.TotalTokens / 3
+	if err := manager.runLarge(requestContext, runID, layers, maxOutputTokens); err != nil {
 		var absorbs []SourceRef
 		for _, s := range layers.smalls {
 			absorbs = append(absorbs, SourceRef{RunID: s.RunID, Seq: s.Seq})
 		}
-		_ = m.appendJSON(ctx, runID, event.TypeContextCompactFailed, CompactFailPayload{
+		_ = manager.appendJSON(requestContext, runID, event.TypeContextCompactFailed, CompactFailPayload{
 			Kind: "large", BasedOn: absorbs, Error: err.Error(),
 		})
 		return false, "", nil
@@ -353,29 +353,29 @@ func (m *Manager) maybeLarge(ctx context.Context, runID string, events []event.E
 	return true, "large_compact", nil
 }
 
-func (m *Manager) runCompact(ctx context.Context, runID string, units []contextUnit, maxOut int) error {
-	system, err := LoadPrompt(m.Settings.PromptsDir, "small")
+func (manager *Manager) runCompact(requestContext context.Context, runID string, units []contextUnit, maxOutputTokens int) error {
+	compactSystemPrompt, err := LoadPrompt(manager.Settings.PromptsDir, "small")
 	if err != nil {
 		return err
 	}
-	user, refs, inTok := evictedJSON(units)
-	raw, err := m.Compactor.Compact(ctx, "small", system, user)
+	compactUserPrompt, refs, inputTokens := evictedJSON(units)
+	compactJSON, err := manager.Compactor.Compact(requestContext, "small", compactSystemPrompt, compactUserPrompt)
 	if err != nil {
 		return err
 	}
-	res, err := ValidateResult(raw, refs, inTok, maxOut)
+	compactResult, err := ValidateResult(compactJSON, refs, inputTokens, maxOutputTokens)
 	if err != nil {
 		return err
 	}
-	return m.appendJSON(ctx, runID, event.TypeContextSmallCompact, CompactPayload{
-		Summary: res.Summary, Facts: res.Facts,
-		OpenItems: res.OpenItems, Decisions: res.Decisions,
+	return manager.appendJSON(requestContext, runID, event.TypeContextSmallCompact, CompactPayload{
+		Summary: compactResult.Summary, Facts: compactResult.Facts,
+		OpenItems: compactResult.OpenItems, Decisions: compactResult.Decisions,
 		BasedOn: refs,
 	})
 }
 
-func (m *Manager) runLarge(ctx context.Context, runID string, layers layer, maxOut int) error {
-	system, err := LoadPrompt(m.Settings.PromptsDir, "large")
+func (manager *Manager) runLarge(requestContext context.Context, runID string, layers layer, maxOutputTokens int) error {
+	compactSystemPrompt, err := LoadPrompt(manager.Settings.PromptsDir, "large")
 	if err != nil {
 		return err
 	}
@@ -394,99 +394,99 @@ func (m *Manager) runLarge(ctx context.Context, runID string, layers layer, maxO
 		"previous_large":  payloadMap(layers.large),
 		"smalls":          smallPayloads(layers.smalls),
 	})
-	inTok := EstimateTokens(string(body))
-	raw, err := m.Compactor.Compact(ctx, "large", system, string(body))
+	inputTokens := EstimateTokens(string(body))
+	compactJSON, err := manager.Compactor.Compact(requestContext, "large", compactSystemPrompt, string(body))
 	if err != nil {
 		return err
 	}
-	res, err := ValidateResult(raw, refs, inTok, maxOut)
+	compactResult, err := ValidateResult(compactJSON, refs, inputTokens, maxOutputTokens)
 	if err != nil {
 		return err
 	}
-	return m.appendJSON(ctx, runID, event.TypeContextLargeCompact, CompactPayload{
-		Summary: res.Summary, Facts: res.Facts,
-		OpenItems: res.OpenItems, Decisions: res.Decisions,
+	return manager.appendJSON(requestContext, runID, event.TypeContextLargeCompact, CompactPayload{
+		Summary: compactResult.Summary, Facts: compactResult.Facts,
+		OpenItems: compactResult.OpenItems, Decisions: compactResult.Decisions,
 		BasedOn: refs, Absorbs: absorbs,
 	})
 }
 
-func (m *Manager) appendJSON(ctx context.Context, runID, typ string, payload any) error {
-	tx, err := m.Events.DB.BeginTx(ctx, nil)
+func (manager *Manager) appendJSON(requestContext context.Context, runID, typ string, payload any) error {
+	tx, err := manager.Events.DB.BeginTx(requestContext, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := m.Events.Append(ctx, tx, runID, typ, payload); err != nil {
+	if _, err := manager.Events.Append(requestContext, tx, runID, typ, payload); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (m *Manager) retrieve(ctx context.Context, in PrepareIn) []RetrievalHit {
-	if !in.WantRetrieve || m.Index == nil {
+func (manager *Manager) retrieve(requestContext context.Context, prepareInput PrepareIn) []RetrievalHit {
+	if !prepareInput.WantRetrieve || manager.Index == nil {
 		return nil
 	}
-	q := strings.TrimSpace(firstUser(ctx, m.Events, in.RunID) + " " + lastTask(ctx, m.Events, in.RunID))
-	if q == "" {
+	searchQuery := strings.TrimSpace(firstUser(requestContext, manager.Events, prepareInput.RunID) + " " + lastTask(requestContext, manager.Events, prepareInput.RunID))
+	if searchQuery == "" {
 		return nil
 	}
-	k := m.Settings.withDefaults().RetrievalK
-	hits, err := m.Index.Search(ctx, q, k)
+	retrievalK := manager.Settings.withDefaults().RetrievalK
+	retrievalHits, err := manager.Index.Search(requestContext, searchQuery, retrievalK)
 	if err != nil {
 		return nil
 	}
-	out := make([]RetrievalHit, 0, len(hits))
-	for _, h := range hits {
-		text := h.Text
+	clippedHits := make([]RetrievalHit, 0, len(retrievalHits))
+	for _, memoryHit := range retrievalHits {
+		text := memoryHit.Text
 		if utf8.RuneCountInString(text) > 200 {
 			text = string([]rune(text)[:200])
 		}
-		out = append(out, RetrievalHit{RunID: h.RunID, Seq: h.Seq, Kind: h.Kind, Text: text})
+		clippedHits = append(clippedHits, RetrievalHit{RunID: memoryHit.RunID, Seq: memoryHit.Seq, Kind: memoryHit.Kind, Text: text})
 	}
-	return out
+	return clippedHits
 }
 
-func firstUser(ctx context.Context, ev *event.Store, runID string) string {
-	t, err := ev.FirstUserText(ctx, runID)
+func firstUser(requestContext context.Context, eventStore *event.Store, runID string) string {
+	userText, err := eventStore.FirstUserText(requestContext, runID)
 	if err != nil {
 		return ""
 	}
-	return t
+	return userText
 }
 
-func lastTask(ctx context.Context, ev *event.Store, runID string) string {
-	t, err := ev.LastTaskTitle(ctx, runID)
+func lastTask(requestContext context.Context, eventStore *event.Store, runID string) string {
+	taskTitle, err := eventStore.LastTaskTitle(requestContext, runID)
 	if err != nil {
 		return ""
 	}
-	return t
+	return taskTitle
 }
 
-func (m *Manager) assemble(ctx context.Context, in PrepareIn, layers layer, events []event.Event, hits []RetrievalHit, st Settings, compactWhy string, lifecycleChanged bool) (Assembly, error) {
+func (manager *Manager) assemble(requestContext context.Context, prepareInput PrepareIn, layers layer, events []event.Event, retrievalHits []RetrievalHit, settings Settings, compactWhy string, lifecycleChanged bool) (Assembly, error) {
 	omitFacts := false
 	stable := stableMsgs(layers, true)
-	userText := firstUser(ctx, m.Events, in.RunID)
-	skills := skill.InjectPaths(in.Workspace, skillPaths(ctx, m, in, userText))
-	ret := []map[string]any{}
-	if rb := retrievalBlock(hits); rb != nil {
-		ret = []map[string]any{rb}
+	userText := firstUser(requestContext, manager.Events, prepareInput.RunID)
+	skills := skill.InjectPaths(prepareInput.Workspace, skillPaths(requestContext, manager, prepareInput, userText))
+	retrievalMessages := []map[string]any{}
+	if retrievalMessage := retrievalBlock(retrievalHits); retrievalMessage != nil {
+		retrievalMessages = []map[string]any{retrievalMessage}
 	}
 	window := layers.window
-	reserved := reservedTokens(in)
-	dyn := func() int {
-		return EstimateMessages(skills) + EstimateMessages(ret) + EstimateTokens(in.Runtime)
+	reserved := reservedTokens(prepareInput)
+	dynamicTailTokens := func() int {
+		return EstimateMessages(skills) + EstimateMessages(retrievalMessages) + EstimateTokens(prepareInput.Runtime)
 	}
-	pendingMin := 0
+	pendingToolMinTokens := 0
 	if n := len(window); n > 0 && window[n-1].Pending {
-		pendingMin = window[n-1].tokens()
+		pendingToolMinTokens = window[n-1].tokens()
 	}
-	if reserved+EstimateMessages(stable)+pendingMin+dyn() > st.TotalTokens {
+	if reserved+EstimateMessages(stable)+pendingToolMinTokens+dynamicTailTokens() > settings.TotalTokens {
 		omitFacts = true
 		stable = stableMsgs(layers, false)
 	}
-	for reserved+EstimateMessages(stable)+EstimateMessages(unitMsgs(window))+dyn() > st.TotalTokens {
-		if len(ret) > 0 {
-			ret = nil
+	for reserved+EstimateMessages(stable)+EstimateMessages(unitMsgs(window))+dynamicTailTokens() > settings.TotalTokens {
+		if len(retrievalMessages) > 0 {
+			retrievalMessages = nil
 			continue
 		}
 		if len(skills) > 0 {
@@ -495,76 +495,76 @@ func (m *Manager) assemble(ctx context.Context, in PrepareIn, layers layer, even
 		}
 		break
 	}
-	var ly InspectLayers
+	var inspectLayers InspectLayers
 	if layers.large != nil {
-		ly.Large = []map[string]any{compactBlock("LARGE", *layers.large)}
+		inspectLayers.Large = []map[string]any{compactBlock("LARGE", *layers.large)}
 	}
 	for _, s := range layers.smalls {
-		ly.Smalls = append(ly.Smalls, compactBlock("SMALL", s))
+		inspectLayers.Smalls = append(inspectLayers.Smalls, compactBlock("SMALL", s))
 	}
 	if !omitFacts {
-		if fb := factsBlock(layers.facts); fb != nil {
-			ly.Facts = []map[string]any{fb}
+		if factsMessage := factsBlock(layers.facts); factsMessage != nil {
+			inspectLayers.Facts = []map[string]any{factsMessage}
 		}
 	}
-	winMsgs := unitMsgs(window)
-	ly.Window = winMsgs
-	ly.Skill = skills
-	ly.Retrieval = ret
-	ly.PendingEvicted = pendingEvictedRefs(events)
-	if in.Runtime != "" {
-		ly.Runtime = []map[string]any{{"role": "user", "content": in.Runtime}}
+	windowMessages := unitMsgs(window)
+	inspectLayers.Window = windowMessages
+	inspectLayers.Skill = skills
+	inspectLayers.Retrieval = retrievalMessages
+	inspectLayers.PendingEvicted = pendingEvictedRefs(events)
+	if prepareInput.Runtime != "" {
+		inspectLayers.Runtime = []map[string]any{{"role": "user", "content": prepareInput.Runtime}}
 	}
-	var msgs []map[string]any
-	msgs = append(msgs, stable...)
-	msgs = append(msgs, winMsgs...)
-	msgs = append(msgs, skills...)
-	msgs = append(msgs, ret...)
-	if msgs == nil {
-		msgs = []map[string]any{}
+	var assembledMessages []map[string]any
+	assembledMessages = append(assembledMessages, stable...)
+	assembledMessages = append(assembledMessages, windowMessages...)
+	assembledMessages = append(assembledMessages, skills...)
+	assembledMessages = append(assembledMessages, retrievalMessages...)
+	if assembledMessages == nil {
+		assembledMessages = []map[string]any{}
 	}
-	remaining := st.TotalTokens - reserved - EstimateMessages(stable) - dyn()
+	remaining := settings.TotalTokens - reserved - EstimateMessages(stable) - dynamicTailTokens()
 	if remaining < 0 {
 		remaining = 0
 	}
-	windowBudget := st.WindowTokens
+	windowBudget := settings.WindowTokens
 	if remaining < windowBudget {
 		windowBudget = remaining
 	}
-	sysEst := EstimateSystem(in.System)
-	toolEst := EstimateTools(in.Tools)
-	totalEst := EstimateLLMInput(in.System, in.Tools, msgs, in.Runtime)
-	over := ""
-	if totalEst > st.TotalTokens {
+	systemEstimate := EstimateSystem(prepareInput.System)
+	toolsEstimate := EstimateTools(prepareInput.Tools)
+	totalEstimate := EstimateLLMInput(prepareInput.System, prepareInput.Tools, assembledMessages, prepareInput.Runtime)
+	overBudgetReason := ""
+	if totalEstimate > settings.TotalTokens {
 		if n := len(window); n > 0 && window[n-1].Pending {
-			over = "pending_tool"
-		} else if in.SkipCompact {
-			over = "reconstruct"
+			overBudgetReason = "pending_tool"
+		} else if prepareInput.SkipCompact {
+			overBudgetReason = "reconstruct"
 		} else {
 			return Assembly{}, fmt.Errorf("context_over_budget")
 		}
 	}
 	applied := Applied{
-		PromptHash:       in.PromptHash,
-		WindowTokens:     st.WindowTokens,
+		PromptHash:       prepareInput.PromptHash,
+		WindowTokens:     settings.WindowTokens,
 		WindowBudget:     windowBudget,
-		WindowEstimate:   EstimateMessages(winMsgs),
-		TotalTokens:      st.TotalTokens,
-		TotalEstimate:    totalEst,
-		InputEstimate:    EstimateMessages(msgs),
-		SystemEstimate:   sysEst,
-		ToolsEstimate:    toolEst,
+		WindowEstimate:   EstimateMessages(windowMessages),
+		TotalTokens:      settings.TotalTokens,
+		TotalEstimate:    totalEstimate,
+		InputEstimate:    EstimateMessages(assembledMessages),
+		SystemEstimate:   systemEstimate,
+		ToolsEstimate:    toolsEstimate,
 		FactCount:        len(layers.facts),
 		SkillCount:       len(skills),
-		PendingEvicted:   ly.PendingEvicted,
-		Retrieval:        hits,
+		PendingEvicted:   inspectLayers.PendingEvicted,
+		Retrieval:        retrievalHits,
 		CompactionReason: compactWhy,
-		OverBudget:       over,
+		OverBudget:       overBudgetReason,
 	}
 	if omitFacts {
 		applied.FactCount = 0
 	}
-	if len(ret) == 0 {
+	if len(retrievalMessages) == 0 {
 		applied.Retrieval = nil
 	}
 	if layers.large != nil {
@@ -580,26 +580,26 @@ func (m *Manager) assemble(ctx context.Context, in PrepareIn, layers layer, even
 	} else if lifecycleChanged {
 		applied.RebuildReason = "window_evict"
 	}
-	return Assembly{Messages: msgs, Applied: applied, Rebuild: rebuild, CompactionReason: compactWhy, Layers: ly}, nil
+	return Assembly{Messages: assembledMessages, Applied: applied, Rebuild: rebuild, CompactionReason: compactWhy, Layers: inspectLayers}, nil
 }
 
-func skillPaths(ctx context.Context, m *Manager, in PrepareIn, query string) []string {
-	if m.Index == nil || query == "" {
+func skillPaths(requestContext context.Context, manager *Manager, prepareInput PrepareIn, query string) []string {
+	if manager.Index == nil || query == "" {
 		return nil
 	}
-	hits, err := m.Index.Search(ctx, query, 16)
+	retrievalHits, err := manager.Index.Search(requestContext, query, 16)
 	if err != nil {
 		return nil
 	}
-	return skill.PathsFromHits(hits, func(hit memory.Hit) string {
-		ev, err := m.Events.Get(ctx, hit.RunID, hit.Seq)
+	return skill.PathsFromHits(retrievalHits, func(hit memory.Hit) string {
+		runEvent, err := manager.Events.Get(requestContext, hit.RunID, hit.Seq)
 		if err != nil {
 			return ""
 		}
 		var payload struct {
 			Path string `json:"path"`
 		}
-		if json.Unmarshal(ev.Payload, &payload) != nil {
+		if json.Unmarshal(runEvent.Payload, &payload) != nil {
 			return ""
 		}
 		return payload.Path
@@ -652,15 +652,15 @@ func payloadMap(e *event.Event) any {
 	if e == nil {
 		return nil
 	}
-	var m any
-	_ = json.Unmarshal(e.Payload, &m)
-	return m
+	var payloadValue any
+	_ = json.Unmarshal(e.Payload, &payloadValue)
+	return payloadValue
 }
 
 func smallPayloads(smalls []event.Event) []any {
-	var out []any
+	var payloads []any
 	for i := range smalls {
-		out = append(out, payloadMap(&smalls[i]))
+		payloads = append(payloads, payloadMap(&smalls[i]))
 	}
-	return out
+	return payloads
 }

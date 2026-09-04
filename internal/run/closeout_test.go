@@ -17,16 +17,16 @@ import (
 )
 
 func TestFailDoesNotMoveCompleted(t *testing.T) {
-	svc, db, _ := askEnv(t)
+	runService, db, _ := askEnv(t)
 	ctx := context.Background()
-	sess, runID := testdb.InsertSession(t, db), ids.New()
+	sessionID, runID := testdb.InsertSession(t, db), ids.New()
 	if _, err := db.Exec(
 		`INSERT INTO runs (id, session_id, status, workspace_dir) VALUES ($1,$2,$3,'')`,
-		runID, sess, StatusCompleted,
+		runID, sessionID, StatusCompleted,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Fail(ctx, runID, "late"); err != nil {
+	if err := runService.Fail(ctx, runID, "late"); err != nil {
 		t.Fatal(err)
 	}
 	var st string
@@ -49,12 +49,12 @@ func TestFailDoesNotMoveCompleted(t *testing.T) {
 }
 
 func TestRecoverWaitingApprovalIsInterruptedAndDecideFails(t *testing.T) {
-	svc, db, _ := askEnv(t)
+	runService, db, _ := askEnv(t)
 	ctx := context.Background()
-	sess, runID := testdb.InsertSession(t, db), ids.New()
+	sessionID, runID := testdb.InsertSession(t, db), ids.New()
 	if _, err := db.Exec(
 		`INSERT INTO runs (id, session_id, status, workspace_dir) VALUES ($1,$2,$3,'')`,
-		runID, sess, StatusWaitingApproval,
+		runID, sessionID, StatusWaitingApproval,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestRecoverWaitingApprovalIsInterruptedAndDecideFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seq, err := svc.Events.Append(ctx, tx, runID, event.TypeToolRequested, map[string]any{
+	seq, err := runService.Events.Append(ctx, tx, runID, event.TypeToolRequested, map[string]any{
 		"id": "1", "name": "fs.write",
 	})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestRecoverWaitingApprovalIsInterruptedAndDecideFails(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Recover(ctx); err != nil {
+	if err := runService.Recover(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var st string
@@ -81,20 +81,20 @@ func TestRecoverWaitingApprovalIsInterruptedAndDecideFails(t *testing.T) {
 	if st != StatusInterrupted {
 		t.Fatalf("status=%s", st)
 	}
-	if err := svc.Decide(ctx, runID, seq, true); !errors.Is(err, ErrNotWaiting) {
+	if err := runService.Decide(ctx, runID, seq, true); !errors.Is(err, ErrNotWaiting) {
 		t.Fatalf("decide after recover: %v", err)
 	}
 }
 
 func TestTwoMessagesSameSessionAreTwoRuns(t *testing.T) {
-	svc, db, work := askEnv(t)
+	runService, db, work := askEnv(t)
 	ctx := context.Background()
-	sess := testdb.InsertSession(t, db)
-	a, err := svc.PostUserMessage(ctx, sess, "one", work)
+	sessionID := testdb.InsertSession(t, db)
+	a, err := runService.PostUserMessage(ctx, sessionID, "one", work)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := svc.PostUserMessage(ctx, sess, "two", work)
+	b, err := runService.PostUserMessage(ctx, sessionID, "two", work)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +103,10 @@ func TestTwoMessagesSameSessionAreTwoRuns(t *testing.T) {
 	}
 	waitStatus(t, db, a, StatusWaitingApproval)
 	waitStatus(t, db, b, StatusWaitingApproval)
-	if err := svc.Decide(ctx, a, requestedSeq(t, db, a), false); err != nil {
+	if err := runService.Decide(ctx, a, requestedSeq(t, db, a), false); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Decide(ctx, b, requestedSeq(t, db, b), false); err != nil {
+	if err := runService.Decide(ctx, b, requestedSeq(t, db, b), false); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, a, StatusCompleted)
@@ -114,19 +114,19 @@ func TestTwoMessagesSameSessionAreTwoRuns(t *testing.T) {
 }
 
 func TestDuplicateDecisionConflicts(t *testing.T) {
-	svc, db, work := askEnv(t)
-	runID := postRun(t, svc, db, work)
+	runService, db, work := askEnv(t)
+	runID := postRun(t, runService, db, work)
 	seq := requestedSeq(t, db, runID)
 	var first, second error
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		first = svc.Decide(context.Background(), runID, seq, false)
+		first = runService.Decide(context.Background(), runID, seq, false)
 	}()
 	go func() {
 		defer wg.Done()
-		second = svc.Decide(context.Background(), runID, seq, false)
+		second = runService.Decide(context.Background(), runID, seq, false)
 	}()
 	wg.Wait()
 	ok, conflict := 0, 0
@@ -148,15 +148,15 @@ func TestDuplicateDecisionConflicts(t *testing.T) {
 }
 
 func TestCancelDuringToolLeavesInterruptedNotCompleted(t *testing.T) {
-	svc, db, work := askEnv(t)
-	svc.Worker = sleepStub{}
-	sess := testdb.InsertSession(t, db)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "sleep", work)
+	runService, db, work := askEnv(t)
+	runService.Worker = sleepStub{}
+	sessionID := testdb.InsertSession(t, db)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "sleep", work)
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusRunning)
-	if err := svc.Cancel(runID); err != nil {
+	if err := runService.Cancel(runID); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusInterrupted)
@@ -173,19 +173,19 @@ func TestCancelDuringToolLeavesInterruptedNotCompleted(t *testing.T) {
 }
 
 func TestCancelVersusDecisionOneTerminal(t *testing.T) {
-	svc, db, work := askEnv(t)
-	runID := postRun(t, svc, db, work)
+	runService, db, work := askEnv(t)
+	runID := postRun(t, runService, db, work)
 	seq := requestedSeq(t, db, runID)
 	var decideErr, cancelErr error
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		decideErr = svc.Decide(context.Background(), runID, seq, false)
+		decideErr = runService.Decide(context.Background(), runID, seq, false)
 	}()
 	go func() {
 		defer wg.Done()
-		cancelErr = svc.Cancel(runID)
+		cancelErr = runService.Cancel(runID)
 	}()
 	wg.Wait()
 	deadline := time.Now().Add(3 * time.Second)
@@ -218,14 +218,14 @@ func TestCancelVersusDecisionOneTerminal(t *testing.T) {
 }
 
 func TestDenyThenAllowIsRejected(t *testing.T) {
-	svc, db, work := askEnv(t)
-	runID := postRun(t, svc, db, work)
+	runService, db, work := askEnv(t)
+	runID := postRun(t, runService, db, work)
 	seq := requestedSeq(t, db, runID)
-	if err := svc.Decide(context.Background(), runID, seq, false); err != nil {
+	if err := runService.Decide(context.Background(), runID, seq, false); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusCompleted)
-	err := svc.Decide(context.Background(), runID, seq, true)
+	err := runService.Decide(context.Background(), runID, seq, true)
 	if !errors.Is(err, ErrNotWaiting) && !errors.Is(err, ErrConflict) {
 		t.Fatalf("second decide: %v", err)
 	}
@@ -245,20 +245,20 @@ func TestDenyThenAllowIsRejected(t *testing.T) {
 }
 
 func TestTerminalDecideAndCancelAreNoops(t *testing.T) {
-	svc, db, _ := askEnv(t)
+	runService, db, _ := askEnv(t)
 	ctx := context.Background()
 	for _, st := range []string{StatusCompleted, StatusFailed, StatusInterrupted} {
-		sess, runID := testdb.InsertSession(t, db), ids.New()
+		sessionID, runID := testdb.InsertSession(t, db), ids.New()
 		if _, err := db.Exec(
 			`INSERT INTO runs (id, session_id, status, workspace_dir) VALUES ($1,$2,$3,'')`,
-			runID, sess, st,
+			runID, sessionID, st,
 		); err != nil {
 			t.Fatal(err)
 		}
-		if err := svc.Decide(ctx, runID, 1, true); !errors.Is(err, ErrNotWaiting) {
+		if err := runService.Decide(ctx, runID, 1, true); !errors.Is(err, ErrNotWaiting) {
 			t.Fatalf("status=%s decide=%v", st, err)
 		}
-		if err := svc.Cancel(runID); !errors.Is(err, ErrNotWaiting) {
+		if err := runService.Cancel(runID); !errors.Is(err, ErrNotWaiting) {
 			t.Fatalf("status=%s cancel=%v", st, err)
 		}
 		var started int
@@ -275,14 +275,14 @@ func TestTerminalDecideAndCancelAreNoops(t *testing.T) {
 }
 
 func TestCancelDuringApprovalInterrupts(t *testing.T) {
-	svc, db, work := askEnv(t)
-	runID := postRun(t, svc, db, work)
+	runService, db, work := askEnv(t)
+	runID := postRun(t, runService, db, work)
 	seq := requestedSeq(t, db, runID)
-	if err := svc.Cancel(runID); err != nil {
+	if err := runService.Cancel(runID); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runID, StatusInterrupted)
-	if err := svc.Decide(context.Background(), runID, seq, true); !errors.Is(err, ErrNotWaiting) {
+	if err := runService.Decide(context.Background(), runID, seq, true); !errors.Is(err, ErrNotWaiting) {
 		t.Fatalf("decide after cancel: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(work, "d12.txt")); !os.IsNotExist(err) {
@@ -309,10 +309,10 @@ func (crashStub) Handle(worker.In, func(worker.Out) error) (*worker.Out, error) 
 func (crashStub) Done(string) {}
 
 func TestWorkerExitFailsRun(t *testing.T) {
-	svc, db, work := askEnv(t)
-	svc.Worker = crashStub{}
-	sess := testdb.InsertSession(t, db)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "crash", work)
+	runService, db, work := askEnv(t)
+	runService.Worker = crashStub{}
+	sessionID := testdb.InsertSession(t, db)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "crash", work)
 	if err != nil {
 		t.Fatal(err)
 	}

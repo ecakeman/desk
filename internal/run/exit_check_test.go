@@ -48,14 +48,14 @@ func TestCancelStopsSleep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(db, event.NewStore(db))
-	svc.Plugins = reg
-	svc.Worker = sleepStub{}
-	svc.PromptsDir = filepath.Join(root, "prompts")
+	runService := NewService(db, event.NewStore(db))
+	runService.Plugins = reg
+	runService.Worker = sleepStub{}
+	runService.PromptsDir = filepath.Join(root, "prompts")
 
-	sess := testdb.InsertSession(t, db)
+	sessionID := testdb.InsertSession(t, db)
 	start := time.Now()
-	runID, err := svc.PostUserMessage(context.Background(), sess, "sleep", work)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "sleep", work)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestCancelStopsSleep(t *testing.T) {
 			t.Fatal(err)
 		}
 		if st == StatusRunning {
-			if err := svc.Cancel(runID); err != nil {
+			if err := runService.Cancel(runID); err != nil {
 				time.Sleep(20 * time.Millisecond)
 				continue
 			}
@@ -94,16 +94,16 @@ func TestCancelStopsSleep(t *testing.T) {
 func TestRecoverMarksRunning(t *testing.T) {
 	db := testdb.Open(t)
 
-	sess := testdb.InsertSession(t, db)
+	sessionID := testdb.InsertSession(t, db)
 	runID := ids.New()
 	if _, err := db.Exec(
 		`INSERT INTO runs (id, session_id, status, workspace_dir) VALUES ($1,$2,'running','')`,
-		runID, sess,
+		runID, sessionID,
 	); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(db, event.NewStore(db))
-	if err := svc.Recover(context.Background()); err != nil {
+	runService := NewService(db, event.NewStore(db))
+	if err := runService.Recover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var st string
@@ -113,7 +113,7 @@ func TestRecoverMarksRunning(t *testing.T) {
 	if st != StatusInterrupted {
 		t.Fatalf("status=%s", st)
 	}
-	if err := svc.Cancel(runID); err != ErrNotWaiting {
+	if err := runService.Cancel(runID); err != ErrNotWaiting {
 		t.Fatalf("cancel completed: %v", err)
 	}
 }

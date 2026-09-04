@@ -25,20 +25,20 @@ func EstimateTokens(s string) int {
 }
 
 // EstimateMessages 把 role+content（及 tool 字段）拼成一段再估算。
-func EstimateMessages(msgs []map[string]any) int {
+func EstimateMessages(chatMessages []map[string]any) int {
 	n := 0
-	for _, m := range msgs {
-		n += EstimateTokens(messageText(m))
+	for _, chatMessage := range chatMessages {
+		n += EstimateTokens(messageText(chatMessage))
 	}
 	return n
 }
 
-func messageText(m map[string]any) string {
-	if m == nil {
+func messageText(chatMessage map[string]any) string {
+	if chatMessage == nil {
 		return ""
 	}
-	role, _ := m["role"].(string)
-	content, _ := m["content"].(string)
+	role, _ := chatMessage["role"].(string)
+	content, _ := chatMessage["content"].(string)
 	return role + "\n" + content
 }
 
@@ -59,28 +59,28 @@ func EstimateTools(tools []ToolSpec) int {
 	if len(tools) == 0 {
 		return 0
 	}
-	out := make([]map[string]any, 0, len(tools))
-	for _, t := range tools {
-		if strings.TrimSpace(t.Name) == "" {
+	openaiTools := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		if strings.TrimSpace(tool.Name) == "" {
 			continue
 		}
-		params := any(map[string]any{"type": "object", "properties": map[string]any{}})
-		if len(t.Parameters) > 0 {
+		parameters := any(map[string]any{"type": "object", "properties": map[string]any{}})
+		if len(tool.Parameters) > 0 {
 			var parsed any
-			if json.Unmarshal(t.Parameters, &parsed) == nil && parsed != nil {
-				params = parsed
+			if json.Unmarshal(tool.Parameters, &parsed) == nil && parsed != nil {
+				parameters = parsed
 			}
 		}
-		out = append(out, map[string]any{
+		openaiTools = append(openaiTools, map[string]any{
 			"type": "function",
 			"function": map[string]any{
-				"name":        strings.ReplaceAll(t.Name, ".", "_"),
-				"description": t.Description,
-				"parameters":  params,
+				"name":        strings.ReplaceAll(tool.Name, ".", "_"),
+				"description": tool.Description,
+				"parameters":  parameters,
 			},
 		})
 	}
-	raw, err := json.Marshal(out)
+	raw, err := json.Marshal(openaiTools)
 	if err != nil {
 		return 0
 	}
@@ -92,6 +92,6 @@ func EstimateLLMInput(system string, tools []ToolSpec, messages []map[string]any
 	return EstimateSystem(system) + EstimateTools(tools) + EstimateMessages(messages) + EstimateTokens(runtime)
 }
 
-func reservedTokens(in PrepareIn) int {
-	return EstimateSystem(in.System) + EstimateTools(in.Tools)
+func reservedTokens(prepareInput PrepareIn) int {
+	return EstimateSystem(prepareInput.System) + EstimateTools(prepareInput.Tools)
 }

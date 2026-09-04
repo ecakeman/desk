@@ -56,12 +56,12 @@ func contractEnv(t *testing.T, w worker.Worker, work string) (*Service, *sql.DB)
 	reg.Put(pingPlugin{})
 	reg.Put(memory.NewHost(idx))
 	reg.Put(task.NewHost(db, ev))
-	svc := NewService(db, ev)
-	svc.Plugins = reg
-	svc.Worker = w
-	svc.Index = idx
-	svc.PromptsDir = filepath.Join(root, "prompts")
-	return svc, db
+	runService := NewService(db, ev)
+	runService.Plugins = reg
+	runService.Worker = w
+	runService.Index = idx
+	runService.PromptsDir = filepath.Join(root, "prompts")
+	return runService, db
 }
 
 type recWorker struct {
@@ -322,9 +322,9 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-func postWait(t *testing.T, svc *Service, db *sql.DB, sess, text, work, want string) string {
+func postWait(t *testing.T, runService *Service, db *sql.DB, sessionID, text, work, want string) string {
 	t.Helper()
-	runID, err := svc.PostUserMessage(context.Background(), sess, text, work)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, text, work)
 	if err != nil {
 		t.Fatal(err)
 	}

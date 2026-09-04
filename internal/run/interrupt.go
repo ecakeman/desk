@@ -7,25 +7,25 @@ import (
 )
 
 // Interrupt 把非终态 Run 标成 interrupted 并追加 run.interrupted。
-func (s *Service) Interrupt(ctx context.Context, runID, reason string) error {
-	tx, err := s.DB.BeginTx(ctx, nil)
+func (service *Service) Interrupt(requestContext context.Context, runID, reason string) error {
+	tx, err := service.DB.BeginTx(requestContext, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var cur string
-	if err := tx.QueryRowContext(ctx,
+	var currentStatus string
+	if err := tx.QueryRowContext(requestContext,
 		`SELECT status FROM runs WHERE id=$1`, runID,
-	).Scan(&cur); err != nil {
+	).Scan(&currentStatus); err != nil {
 		return err
 	}
-	if Terminal(cur) {
+	if Terminal(currentStatus) {
 		return nil
 	}
-	if err := Transition(ctx, tx, runID, cur, StatusInterrupted); err != nil {
+	if err := Transition(requestContext, tx, runID, currentStatus, StatusInterrupted); err != nil {
 		return err
 	}
-	if _, err := s.Events.Append(ctx, tx, runID, event.TypeRunInterrupted, map[string]string{
+	if _, err := service.Events.Append(requestContext, tx, runID, event.TypeRunInterrupted, map[string]string{
 		"reason": reason,
 	}); err != nil {
 		return err
@@ -34,10 +34,10 @@ func (s *Service) Interrupt(ctx context.Context, runID, reason string) error {
 }
 
 // Cancel 取消本进程里这条 Drive 的 Context；没有活跃 Drive 则 ErrNotWaiting。
-func (s *Service) Cancel(runID string) error {
-	s.mu.Lock()
-	cancel, ok := s.cancels[runID]
-	s.mu.Unlock()
+func (service *Service) Cancel(runID string) error {
+	service.mu.Lock()
+	cancel, ok := service.cancels[runID]
+	service.mu.Unlock()
 	if !ok {
 		return ErrNotWaiting
 	}
@@ -46,8 +46,8 @@ func (s *Service) Cancel(runID string) error {
 }
 
 // Recover 启动时把仍 running / waiting_approval 的 Run 标成 interrupted。
-func (s *Service) Recover(ctx context.Context) error {
-	rows, err := s.DB.QueryContext(ctx,
+func (service *Service) Recover(requestContext context.Context) error {
+	rows, err := service.DB.QueryContext(requestContext,
 		`SELECT id, status FROM runs WHERE status IN ('running','waiting_approval')`,
 	)
 	if err != nil {
@@ -57,17 +57,17 @@ func (s *Service) Recover(ctx context.Context) error {
 	type row struct{ id, st string }
 	var list []row
 	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.st); err != nil {
+		var runRow row
+		if err := rows.Scan(&runRow.id, &runRow.st); err != nil {
 			return err
 		}
-		list = append(list, r)
+		list = append(list, runRow)
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for _, r := range list {
-		if err := s.Interrupt(ctx, r.id, "startup"); err != nil {
+	for _, runRow := range list {
+		if err := service.Interrupt(requestContext, runRow.id, "startup"); err != nil {
 			return err
 		}
 	}

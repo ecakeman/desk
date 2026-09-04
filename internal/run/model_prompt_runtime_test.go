@@ -23,11 +23,11 @@ func TestRuntimeContractModelRouting(t *testing.T) {
 		return &worker.Out{T: "turn.finish", Text: "ok"}
 	}}
 	work := t.TempDir()
-	svc, db := contractEnv(t, w, work)
-	svc.Flash = config.ModelConfig{Model: "flash-stub", BaseURL: "http://flash.example/v1"}
-	svc.Pro = config.ModelConfig{Model: "pro-stub", BaseURL: "http://pro.example/v1"}
-	sess := testdb.InsertSession(t, db)
-	runID := postWait(t, svc, db, sess, "route", work, StatusCompleted)
+	runService, db := contractEnv(t, w, work)
+	runService.Flash = config.ModelConfig{Model: "flash-stub", BaseURL: "http://flash.example/v1"}
+	runService.Pro = config.ModelConfig{Model: "pro-stub", BaseURL: "http://pro.example/v1"}
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "route", work, StatusCompleted)
 	var plan, act int
 	for _, in := range w.snapshot() {
 		switch in.Phase {
@@ -99,13 +99,13 @@ func TestRuntimeContractModelRouting(t *testing.T) {
 
 func TestRuntimeContractReviewBudget(t *testing.T) {
 	stub := &budgetStub{finishTools: 15}
-	svc := budgetEnv(t, stub)
-	sess := testdb.InsertSession(t, svc.DB)
-	runID, err := svc.PostUserMessage(context.Background(), sess, "budget", t.TempDir())
+	runService := budgetEnv(t, stub)
+	sessionID := testdb.InsertSession(t, runService.DB)
+	runID, err := runService.PostUserMessage(context.Background(), sessionID, "budget", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitStatus(t, svc.DB, runID, StatusCompleted)
+	waitStatus(t, runService.DB, runID, StatusCompleted)
 	if n := len(stub.proReviews()); n != 2 {
 		t.Fatalf("pro reviews=%d want 2", n)
 	}
@@ -128,7 +128,7 @@ func TestRuntimeContractReviewBudget(t *testing.T) {
 	if fifteenth == nil || fifteenth.Phase != "act" {
 		t.Fatalf("overflow ask=%+v", fifteenth)
 	}
-	assertEventConsistency(t, svc.DB, runID)
+	assertEventConsistency(t, runService.DB, runID)
 	report(t, "review budget",
 		"review_requested", fmt.Sprintf("%d", nReviewAsk),
 		"pro_review_count", fmt.Sprintf("%d", len(stub.proReviews())),
@@ -150,15 +150,15 @@ func TestRuntimeContractPromptSnapshot(t *testing.T) {
 		}
 		return &worker.Out{T: "turn.finish", Text: "ok"}
 	}}
-	svc, db := contractEnv(t, w, work)
-	svc.PromptsDir = dir
-	sess := testdb.InsertSession(t, db)
+	runService, db := contractEnv(t, w, work)
+	runService.PromptsDir = dir
+	sessionID := testdb.InsertSession(t, db)
 
 	before, err := prompt.Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runA := postWait(t, svc, db, sess, "snap-a", work, StatusWaitingApproval)
+	runA := postWait(t, runService, db, sessionID, "snap-a", work, StatusWaitingApproval)
 
 	if err := os.WriteFile(filepath.Join(dir, "system", "base.md"), []byte("Desk SNAPSHOT-B-ONLY\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -171,9 +171,9 @@ func TestRuntimeContractPromptSnapshot(t *testing.T) {
 		t.Fatal("catalog hash must change")
 	}
 
-	runB := postWait(t, svc, db, sess, "snap-b", work, StatusCompleted)
+	runB := postWait(t, runService, db, sessionID, "snap-b", work, StatusCompleted)
 	seq := requestedSeq(t, db, runA)
-	if err := svc.Decide(context.Background(), runA, seq, true); err != nil {
+	if err := runService.Decide(context.Background(), runA, seq, true); err != nil {
 		t.Fatal(err)
 	}
 	waitStatus(t, db, runA, StatusCompleted)

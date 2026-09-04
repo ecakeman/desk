@@ -33,7 +33,7 @@ func NewHTTPCompactor(baseURL, key, model string) *HTTPCompactor {
 	}
 }
 
-func (h *HTTPCompactor) Compact(ctx context.Context, kind, system, user string) ([]byte, error) {
+func (h *HTTPCompactor) Compact(requestContext context.Context, kind, system, user string) ([]byte, error) {
 	if h == nil || h.URL == "" || h.Model == "" {
 		return nil, fmt.Errorf("compact_unconfigured")
 	}
@@ -49,37 +49,37 @@ func (h *HTTPCompactor) Compact(ctx context.Context, kind, system, user string) 
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.URL, bytes.NewReader(body))
+	httpRequest, err := http.NewRequestWithContext(requestContext, http.MethodPost, h.URL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("Content-Type", "application/json")
 	if h.Key != "" {
-		req.Header.Set("Authorization", "Bearer "+h.Key)
+		httpRequest.Header.Set("Authorization", "Bearer "+h.Key)
 	}
-	resp, err := h.Client.Do(req)
+	httpResponse, err := h.Client.Do(httpRequest)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("compact_http_%d", resp.StatusCode)
+	defer httpResponse.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(httpResponse.Body, 8<<20))
+	if httpResponse.StatusCode >= 400 {
+		return nil, fmt.Errorf("compact_http_%d", httpResponse.StatusCode)
 	}
-	var out struct {
+	var chatCompletion struct {
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
+	if err := json.Unmarshal(raw, &chatCompletion); err != nil {
 		return nil, fmt.Errorf("compact_decode: %w", err)
 	}
-	if len(out.Choices) == 0 {
+	if len(chatCompletion.Choices) == 0 {
 		return nil, fmt.Errorf("compact_empty_choice")
 	}
-	return []byte(stripFence(out.Choices[0].Message.Content)), nil
+	return []byte(stripFence(chatCompletion.Choices[0].Message.Content)), nil
 }
 
 func stripFence(s string) string {

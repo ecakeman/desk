@@ -23,7 +23,7 @@ func TestEstimateToolsIncludesSchemaNotJustDescription(t *testing.T) {
 }
 
 func TestRealLLMBudgetSmallSystemLargeMessages(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 80, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 80, &StubCompactor{Err: context.Canceled})
 	m.Settings.TotalTokens = 200
 	m.Settings.SmallTriggerTok = 1_000_000
 	for i := 0; i < 12; i++ {
@@ -31,29 +31,29 @@ func TestRealLLMBudgetSmallSystemLargeMessages(t *testing.T) {
 	}
 	sys := "tiny-system"
 	tools := []ToolSpec{{Name: "ping.ok", Description: "noop", Parameters: json.RawMessage(`{"type":"object"}`)}}
-	asm, err := m.Prepare(context.Background(), PrepareIn{
-		SessionID: sess, RunID: runID, System: sys, Tools: tools,
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{
+		SessionID: sessionID, RunID: runID, System: sys, Tools: tools,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := EstimateLLMInput(sys, tools, asm.Messages, "")
+	got := EstimateLLMInput(sys, tools, contextAssembly.Messages, "")
 	if got > m.Settings.TotalTokens {
 		t.Fatalf("real input %d > total %d", got, m.Settings.TotalTokens)
 	}
-	if asm.Applied.TotalEstimate != got {
-		t.Fatalf("applied total_estimate %d got %d", asm.Applied.TotalEstimate, got)
+	if contextAssembly.Applied.TotalEstimate != got {
+		t.Fatalf("applied total_estimate %d got %d", contextAssembly.Applied.TotalEstimate, got)
 	}
-	if asm.Applied.SystemEstimate != EstimateSystem(sys) || asm.Applied.ToolsEstimate != EstimateTools(tools) {
-		t.Fatalf("system/tools estimates %+v", asm.Applied)
+	if contextAssembly.Applied.SystemEstimate != EstimateSystem(sys) || contextAssembly.Applied.ToolsEstimate != EstimateTools(tools) {
+		t.Fatalf("system/tools estimates %+v", contextAssembly.Applied)
 	}
-	if got <= EstimateMessages(asm.Messages) {
+	if got <= EstimateMessages(contextAssembly.Messages) {
 		t.Fatal("reserved system/tools must add to total_estimate")
 	}
 }
 
 func TestRealLLMBudgetLargeSystemToolsSmallMessages(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	appendUser(t, ev, runID, "hi")
 	sys := strings.Repeat("SYSTEM-BLOCK-", 80)
 	tools := []ToolSpec{{
@@ -63,20 +63,20 @@ func TestRealLLMBudgetLargeSystemToolsSmallMessages(t *testing.T) {
 	}}
 	m.Settings.TotalTokens = EstimateSystem(sys) + EstimateTools(tools) + 40
 	m.Settings.SmallTriggerTok = 1_000_000
-	asm, err := m.Prepare(context.Background(), PrepareIn{
-		SessionID: sess, RunID: runID, System: sys, Tools: tools,
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{
+		SessionID: sessionID, RunID: runID, System: sys, Tools: tools,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := EstimateLLMInput(sys, tools, asm.Messages, "")
-	if got > m.Settings.TotalTokens && asm.Applied.OverBudget != "pending_tool" {
+	got := EstimateLLMInput(sys, tools, contextAssembly.Messages, "")
+	if got > m.Settings.TotalTokens && contextAssembly.Applied.OverBudget != "pending_tool" {
 		t.Fatalf("real input %d > total %d", got, m.Settings.TotalTokens)
 	}
 }
 
 func TestRealLLMBudgetEverythingLargeNoLargeTruncate(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	ctx := context.Background()
 	tx, err := ev.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -99,32 +99,32 @@ func TestRealLLMBudgetEverythingLargeNoLargeTruncate(t *testing.T) {
 	hits := []RetrievalHit{{RunID: runID, Seq: 1, Kind: event.TypeMessageUser, Text: strings.Repeat("retrieval-huge ", 50)}}
 	m.Settings.TotalTokens = 180
 	m.Settings.SmallTriggerTok = 1_000_000
-	asm, err := m.Prepare(ctx, PrepareIn{
-		SessionID: sess, RunID: runID, System: sys, Tools: tools, FrozenHits: hits,
+	contextAssembly, err := m.Prepare(ctx, PrepareIn{
+		SessionID: sessionID, RunID: runID, System: sys, Tools: tools, FrozenHits: hits,
 	})
 	if err != nil && err.Error() != "context_over_budget" {
 		t.Fatal(err)
 	}
 	if err == nil {
-		got := EstimateLLMInput(sys, tools, asm.Messages, "")
-		if got > m.Settings.TotalTokens && asm.Applied.OverBudget != "pending_tool" {
+		got := EstimateLLMInput(sys, tools, contextAssembly.Messages, "")
+		if got > m.Settings.TotalTokens && contextAssembly.Applied.OverBudget != "pending_tool" {
 			t.Fatalf("real input %d > total %d", got, m.Settings.TotalTokens)
 		}
 		joined := ""
-		for _, msg := range asm.Layers.Large {
+		for _, msg := range contextAssembly.Layers.Large {
 			joined += fmtString(msg["content"])
 		}
 		if !strings.Contains(joined, "UNIQUE-LARGE-BODY") {
 			t.Fatal("large truncated")
 		}
-		if len(asm.Applied.Retrieval) != 0 {
+		if len(contextAssembly.Applied.Retrieval) != 0 {
 			t.Fatal("retrieval should drop before slicing large")
 		}
 	}
 }
 
 func TestRealLLMBudgetPendingToolException(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
 	ctx := context.Background()
 	tx, err := ev.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -147,23 +147,23 @@ func TestRealLLMBudgetPendingToolException(t *testing.T) {
 	reserved := EstimateSystem(sys) + EstimateTools(tools)
 	m.Settings.TotalTokens = reserved - 1
 	m.Settings.SmallTriggerTok = 1_000_000
-	asm, err := m.Prepare(ctx, PrepareIn{
-		SessionID: sess, RunID: runID, System: sys, Tools: tools, PendingTool: "pend",
+	contextAssembly, err := m.Prepare(ctx, PrepareIn{
+		SessionID: sessionID, RunID: runID, System: sys, Tools: tools, PendingTool: "pend",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := EstimateLLMInput(sys, tools, asm.Messages, "")
+	got := EstimateLLMInput(sys, tools, contextAssembly.Messages, "")
 	if got <= m.Settings.TotalTokens {
 		t.Fatalf("expected over real budget got=%d total=%d", got, m.Settings.TotalTokens)
 	}
-	if asm.Applied.OverBudget != "pending_tool" {
-		t.Fatalf("over=%q", asm.Applied.OverBudget)
+	if contextAssembly.Applied.OverBudget != "pending_tool" {
+		t.Fatalf("over=%q", contextAssembly.Applied.OverBudget)
 	}
 }
 
 func TestCompactorNilDoesNotEvict(t *testing.T) {
-	m, ev, sess, runID := testMgr(t, 30, &StubCompactor{Raw: []byte(`{}`)})
+	m, ev, sessionID, runID := testMgr(t, 30, &StubCompactor{Raw: []byte(`{}`)})
 	m.Compactor = nil
 	m.Settings.TotalTokens = 80
 	first := "keep-raw-" + ids.New()
@@ -171,14 +171,14 @@ func TestCompactorNilDoesNotEvict(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		appendUser(t, ev, runID, strings.Repeat("later-", 12)+ids.New())
 	}
-	_, err := m.Prepare(context.Background(), PrepareIn{SessionID: sess, RunID: runID})
+	_, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
 	if err != nil && err.Error() != "context_over_budget" {
 		t.Fatal(err)
 	}
 	if countType(t, ev, runID, event.TypeContextEvicted) != 0 {
 		t.Fatal("evicted without compactor")
 	}
-	events, err := ev.ListBySession(context.Background(), sess)
+	events, err := ev.ListBySession(context.Background(), sessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
