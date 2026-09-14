@@ -32,6 +32,12 @@ run_contract() {
     tail -n 40 "$out"
     fail=$((fail + 1))
   fi
+  if [[ -n "${VERIFY_ARTIFACT_DIR:-}" ]]; then
+    mkdir -p "${VERIFY_ARTIFACT_DIR}/raw/contracts"
+    local slug
+    slug="$(printf '%s' "${label}" | tr ' /' '__')"
+    cp "$out" "${VERIFY_ARTIFACT_DIR}/raw/contracts/${slug}.txt"
+  fi
   rm -f "$out"
 }
 

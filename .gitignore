@@ -41,3 +41,6 @@ coverage.html
 # 个人啃读笔记，不进仓库
 /notes/
 /temp.md
+
+# 测试 run 原始输出（metrics/report 可提交）
+/artifacts/runs/*/raw/

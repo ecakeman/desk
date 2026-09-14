@@ -1,0 +1,42 @@
+{
+  "repository": "desk",
+  "commit_sha": "1983e8b336559d61c935f12516951fbb08123bf5",
+  "timestamp": "2026-09-14T14:54:22.304874+00:00",
+  "command": "python3 scripts/collect_verify.py",
+  "commands": [
+    "make db-up db-migrate",
+    "go test -json -p 1 -count=1 -timeout 180s ./cmd/... ./internal/... ./plugins/...",
+    "go test -json -run '^TestRuntimeContractLifecycle$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractToolLifecycle$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractToolFailure$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractApprovalReject$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractApprovalAllow$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractCancel$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractEventConsistency$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractModelRouting$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractReviewBudget$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractPromptSnapshot$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractMemoryFallback$' ./internal/memory/",
+    "go test -json -run '^TestRuntimeContractShowcase$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractHTTPLifecycle$' ./internal/httpapi/",
+    "go test -json -run '^TestRuntimeContractTurnFinishSchema$' ./internal/run/",
+    "go test -json -run '^TestRuntimeContractHTTPApprovalReject$' ./internal/httpapi/",
+    "go test -json -run '^TestRuntimeContractHTTPCancel$' ./internal/httpapi/",
+    "go test -json -run 'TestEvictedBuffer|TestInvariant|...' ./internal/ctxmgr/"
+  ],
+  "environment": {
+    "DESK_SHOWCASE_JSON": "/home/sancho/projects/desk/artifacts/runs/live-tmp/showcase.json",
+    "HOME": "/home/sancho",
+    "GOTELEMETRY_GOPLS_CLIENT_TOKEN": "[REDACTED]",
+    "USER": "sancho",
+    "ANTHROPIC_AUTH_TOKEN": "[REDACTED]"
+  },
+  "model": {
+    "provider": "deepseek",
+    "flash_model": "",
+    "pro_model": ""
+  },
+  "go_version": "go version go1.26.6 linux/amd64",
+  "smoke": false,
+  "run_dir": "artifacts/runs/20260914T145422Z"
+}

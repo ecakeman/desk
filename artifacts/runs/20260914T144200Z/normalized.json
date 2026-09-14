@@ -1,0 +1,22 @@
+[
+  {
+    "repository": "desk",
+    "commit_sha": "1983e8b336559d61c935f12516951fbb08123bf5",
+    "timestamp": "2026-09-14T14:42:00.538185+00:00",
+    "test_name": "TestRuntimeContractLifecycle",
+    "test_file": "internal/run/lifecycle_runtime_test.go",
+    "test_command": "go test -json -run '^TestRuntimeContractLifecycle$' ./internal/run/",
+    "package": "./internal/run/",
+    "capability": "Run Lifecycle",
+    "suite": "runtime_contract_smoke",
+    "pass_fail": "pass",
+    "evidence": [
+      "[PASS] run lifecycle\\n\"}",
+      "       initial_status: running\\n\"}",
+      "       events_count: 7\\n\"}",
+      "       final_status: completed\\n\"}",
+      "       terminal_event: run.completed\\n\"}"
+    ],
+    "measurements": []
+  }
+]

@@ -1,0 +1,136 @@
+{
+  "repository": "desk",
+  "runtime_contracts": [
+    {
+      "id": "run_lifecycle",
+      "label": "run lifecycle",
+      "test_name": "TestRuntimeContractLifecycle",
+      "test_file": "internal/run/lifecycle_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Run Lifecycle"
+    },
+    {
+      "id": "tool_lifecycle",
+      "label": "tool lifecycle",
+      "test_name": "TestRuntimeContractToolLifecycle",
+      "test_file": "internal/run/lifecycle_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Tool Calling"
+    },
+    {
+      "id": "tool_failure",
+      "label": "tool failure",
+      "test_name": "TestRuntimeContractToolFailure",
+      "test_file": "internal/run/lifecycle_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Tool Calling"
+    },
+    {
+      "id": "approval_reject",
+      "label": "approval reject",
+      "test_name": "TestRuntimeContractApprovalReject",
+      "test_file": "internal/run/lifecycle_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Approval"
+    },
+    {
+      "id": "approval_allow",
+      "label": "approval allow",
+      "test_name": "TestRuntimeContractApprovalAllow",
+      "test_file": "internal/run/lifecycle_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Approval"
+    },
+    {
+      "id": "cancellation",
+      "label": "cancellation",
+      "test_name": "TestRuntimeContractCancel",
+      "test_file": "internal/run/lifecycle_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Cancel / Interrupt"
+    },
+    {
+      "id": "event_consistency",
+      "label": "event consistency",
+      "test_name": "TestRuntimeContractEventConsistency",
+      "test_file": "internal/run/lifecycle_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Event Consistency"
+    },
+    {
+      "id": "model_routing",
+      "label": "model routing",
+      "test_name": "TestRuntimeContractModelRouting",
+      "test_file": "internal/run/model_prompt_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Model Routing"
+    },
+    {
+      "id": "review_budget",
+      "label": "review budget",
+      "test_name": "TestRuntimeContractReviewBudget",
+      "test_file": "internal/run/model_prompt_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Context Budget"
+    },
+    {
+      "id": "prompt_snapshot",
+      "label": "prompt snapshot",
+      "test_name": "TestRuntimeContractPromptSnapshot",
+      "test_file": "internal/run/model_prompt_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Prompt Snapshot"
+    },
+    {
+      "id": "memory_fallback",
+      "label": "memory fallback",
+      "test_name": "TestRuntimeContractMemoryFallback",
+      "test_file": "internal/memory/search_runtime_test.go",
+      "package": "./internal/memory/",
+      "capability": "Memory Fallback"
+    },
+    {
+      "id": "showcase",
+      "label": "4-run showcase",
+      "test_name": "TestRuntimeContractShowcase",
+      "test_file": "internal/run/showcase_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Showcase"
+    },
+    {
+      "id": "http_lifecycle",
+      "label": "http lifecycle",
+      "test_name": "TestRuntimeContractHTTPLifecycle",
+      "test_file": "internal/httpapi/runtime_contract_test.go",
+      "package": "./internal/httpapi/",
+      "capability": "Run Lifecycle"
+    }
+  ],
+  "extra_worker_protocol": [
+    {
+      "test_name": "TestRuntimeContractTurnFinishSchema",
+      "test_file": "internal/run/lifecycle_runtime_test.go",
+      "package": "./internal/run/",
+      "capability": "Worker Protocol"
+    },
+    {
+      "test_name": "TestRuntimeContractHTTPApprovalReject",
+      "test_file": "internal/httpapi/runtime_contract_test.go",
+      "package": "./internal/httpapi/",
+      "capability": "Approval"
+    },
+    {
+      "test_name": "TestRuntimeContractHTTPCancel",
+      "test_file": "internal/httpapi/runtime_contract_test.go",
+      "package": "./internal/httpapi/",
+      "capability": "Cancel / Interrupt"
+    }
+  ],
+  "context_invariant_prefixes": [
+    "TestEvictedBuffer",
+    "TestInvariant",
+    "TestPrepareSmallCompact",
+    "TestLargeRollingBaseline",
+    "TestTotalBudgetBoundsEstimate"
+  ]
+}

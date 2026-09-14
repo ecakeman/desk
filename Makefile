@@ -7,6 +7,7 @@ DATABASE_URL ?= postgres://desk:desk@127.0.0.1:5432/desk?sslmode=disable
 PLAYWRIGHT_IMAGE ?= mcr.microsoft.com/playwright:v1.62.1-noble
 
 .PHONY: fmt fmt-check vet test test-integration test-runtime verify verify-live \
+	verify-artifacts verify-artifacts-smoke \
 	showcase-reset showcase-live showcase-live-auto plugins web web-lint web-test web-e2e \
 	go-build build serve chat db-up db-migrate db-down
 
@@ -37,6 +38,12 @@ test-runtime:
 verify: db-up db-migrate
 	@chmod +x scripts/verify.sh
 	@bash scripts/verify.sh
+
+verify-artifacts: db-up db-migrate
+	python3 scripts/collect_verify.py
+
+verify-artifacts-smoke:
+	python3 scripts/collect_verify.py --smoke
 
 showcase-reset:
 	mkdir -p ws-probe

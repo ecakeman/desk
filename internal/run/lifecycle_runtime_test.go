@@ -57,6 +57,16 @@ func TestRuntimeContractTurnFinishSchema(t *testing.T) {
 	if hasType(events, event.TypeRunCompleted) || hasType(events, event.TypeMessageCompleted) {
 		t.Fatalf("schema fail must not apply runtime: %v", typesOf(events))
 	}
+	if !hasType(events, event.TypeRunFailed) {
+		t.Fatalf("invalid turn.finish must Fail: %v", typesOf(events))
+	}
+	report(t, "turn.finish schema",
+		"worker_out", "turn.finish+tool_name",
+		"final_status", runStatus(t, db, runID),
+		"run_completed", fmt.Sprintf("%v", hasType(events, event.TypeRunCompleted)),
+		"run_failed", fmt.Sprintf("%v", hasType(events, event.TypeRunFailed)),
+		"terminal_event", terminalEvent(events),
+	)
 }
 
 func TestRuntimeContractToolLifecycle(t *testing.T) {

@@ -353,7 +353,51 @@ def count_approvals(events: list[dict]) -> int:
     return n
 
 
+def parse_artifact_dir(argv: list[str]) -> Path | None:
+    for i, a in enumerate(argv):
+        if a == "--artifact-dir" and i + 1 < len(argv):
+            return Path(argv[i + 1])
+        if a.startswith("--artifact-dir="):
+            return Path(a.split("=", 1)[1])
+    env = os.environ.get("DESK_SHOWCASE_ARTIFACT", "").strip()
+    return Path(env) if env else None
+
+
+def summarize_run(rec: dict) -> dict:
+    events = rec.get("events") or []
+    types: dict[str, int] = {}
+    tools: list[str] = []
+    for e in events:
+        typ = str(e.get("type") or "")
+        types[typ] = types.get(typ, 0) + 1
+        p = e.get("payload") or {}
+        if typ == "tool.requested":
+            tools.append(str(p.get("name") or ""))
+    return {
+        "i": rec.get("i"),
+        "run_id": rec.get("run_id"),
+        "status": rec.get("status"),
+        "event_count": len(events),
+        "event_types": types,
+        "tool_calls": tools,
+        "approvals": rec.get("approvals"),
+        "workspace_changes": rec.get("changed"),
+        "memory_hits": memory_hits(events),
+        "task_updates": count_type(events, "task.updated"),
+        "review_completed": count_type(events, "review.completed"),
+        "delta_events": count_type(events, "message.delta"),
+    }
+
+
+def write_showcase_artifact(dest: Path, payload: dict) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    path = dest / "showcase.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print("showcase artifact", path)
+
+
 def main() -> int:
+    artifact_dir = parse_artifact_dir(sys.argv[1:])
     if "--reset-only" in sys.argv:
         dest = ROOT / "ws-probe" / "bookmark-lab"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -508,6 +552,27 @@ def main() -> int:
             print("  failure             event/status projection mismatch")
     print()
     print("changed files:", ", ".join(total_changed) if total_changed else "(none)")
+    if artifact_dir is not None:
+        write_showcase_artifact(
+            artifact_dir,
+            {
+                "repository": "desk",
+                "suite": "live_showcase",
+                "session_id": session_id,
+                "overall": overall,
+                "classification": kind,
+                "consistent": consistent,
+                "approval": approval_c,
+                "workspace": ws_c,
+                "task_continuity": task_c,
+                "memory_continuity": mem_c,
+                "review_count": reviews,
+                "review_budget_ok": budget_ok,
+                "completed_ok": completed_ok,
+                "changed_files": total_changed,
+                "runs": [summarize_run(r) for r in runs],
+            },
+        )
     return 0 if overall == "PASS" else 1
 
 

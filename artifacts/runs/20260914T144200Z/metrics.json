@@ -1,0 +1,57 @@
+{
+  "metrics": [
+    {
+      "name": "runtime_contract_pass_rate",
+      "value": "1/1",
+      "sample_count": 1,
+      "measurement_unit": "count",
+      "formula": "passed_named_contracts / 13 (catalog runtime_contracts); smoke uses N=ran",
+      "source": "raw/contracts/*.jsonl",
+      "aggregation_method": "ratio_or_count",
+      "cases": [
+        "TestRuntimeContractLifecycle"
+      ]
+    },
+    {
+      "name": "go_integration_pass_rate",
+      "value": "NOT_RUN",
+      "sample_count": 0,
+      "measurement_unit": "count",
+      "formula": "top_level Test pass / (pass+fail); skips excluded from denominator",
+      "source": "raw/integration.jsonl",
+      "aggregation_method": "ratio_or_count",
+      "cases": []
+    },
+    {
+      "name": "context_invariant_pass_rate",
+      "value": "NOT_RUN",
+      "sample_count": 0,
+      "measurement_unit": "count",
+      "formula": "ctxmgr invariant/evicted/compact tests pass / total ran",
+      "source": "raw/ctxmgr.jsonl",
+      "aggregation_method": "ratio_or_count",
+      "cases": []
+    },
+    {
+      "name": "worker_protocol_extra_pass_rate",
+      "value": "NOT_RUN",
+      "sample_count": 0,
+      "measurement_unit": "count",
+      "formula": "TurnFinishSchema + HTTP approval/cancel pass / N; NOT part of 13/13",
+      "source": "raw/extra/*.jsonl",
+      "aggregation_method": "ratio_or_count",
+      "cases": []
+    },
+    {
+      "name": "live_showcase_success_rate",
+      "value": "NOT_RUN",
+      "sample_count": 0,
+      "measurement_unit": "count",
+      "formula": "completed_runs / 4 from scripts/showcase_live.py artifact",
+      "source": "(absent)",
+      "aggregation_method": "ratio_or_count",
+      "cases": []
+    }
+  ],
+  "measurements": []
+}

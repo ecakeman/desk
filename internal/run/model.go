@@ -84,20 +84,20 @@ func (service *Service) ask(requestContext context.Context, runID, sessionID, wo
 	if workerInput.T == "turn.start" {
 		workerInput.Messages = contextAssembly.Messages
 	} else if contextAssembly.Rebuild {
-		replacedMessages := append([]map[string]any{}, contextAssembly.Messages...)
-		if runtimeText := promptSnapshot.Runtime(workerInput.Phase); runtimeText != "" {
-			replacedMessages = append(replacedMessages, map[string]any{"role": "user", "content": runtimeText})
-		}
+		// Rebuild 时 pending assistant(tool_calls) 是协议边界：
+		// durable 前缀进 context.replace；skill/retrieval/runtime 延后到 tool.result 之后。
+		boundary := splitPendingToolBoundary(contextAssembly)
 		if _, err := service.Worker.Handle(worker.In{
 			T:        "context.replace",
 			RunID:    runID,
-			Messages: replacedMessages,
+			Messages: boundary.Replace,
 			System:   promptSnapshot.System(),
 		}, nil); err != nil {
 			return nil, err
 		}
-		workerInput.SkipRuntime = true
-		workerInput.Messages = nil
+		// tool.result 先 append tool，再 extend deferred，再 append_runtime。
+		workerInput.Messages = boundary.Deferred
+		workerInput.SkipRuntime = false
 	} else if workerInput.Phase == "review" && len(contextAssembly.Layers.Retrieval) > 0 {
 		workerInput.Messages = contextAssembly.Layers.Retrieval
 	}

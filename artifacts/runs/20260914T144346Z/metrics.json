@@ -1,0 +1,106 @@
+{
+  "metrics": [
+    {
+      "name": "runtime_contract_pass_rate",
+      "value": "13/13",
+      "sample_count": 13,
+      "measurement_unit": "count",
+      "formula": "passed_named_contracts / 13 (catalog runtime_contracts); smoke uses N=ran",
+      "source": "raw/contracts/*.jsonl",
+      "aggregation_method": "ratio_or_count",
+      "cases": [
+        "TestRuntimeContractLifecycle",
+        "TestRuntimeContractToolLifecycle",
+        "TestRuntimeContractToolFailure",
+        "TestRuntimeContractApprovalReject",
+        "TestRuntimeContractApprovalAllow",
+        "TestRuntimeContractCancel",
+        "TestRuntimeContractEventConsistency",
+        "TestRuntimeContractModelRouting",
+        "TestRuntimeContractReviewBudget",
+        "TestRuntimeContractPromptSnapshot",
+        "TestRuntimeContractMemoryFallback",
+        "TestRuntimeContractShowcase",
+        "TestRuntimeContractHTTPLifecycle"
+      ]
+    },
+    {
+      "name": "go_integration_pass_rate",
+      "value": "135/135",
+      "sample_count": 136,
+      "measurement_unit": "count",
+      "formula": "top_level Test pass / (pass+fail); skips excluded from denominator",
+      "source": "raw/integration.jsonl",
+      "aggregation_method": "ratio_or_count",
+      "cases": []
+    },
+    {
+      "name": "context_invariant_pass_rate",
+      "value": "13/13",
+      "sample_count": 13,
+      "measurement_unit": "count",
+      "formula": "ctxmgr invariant/evicted/compact tests pass / total ran",
+      "source": "raw/ctxmgr.jsonl",
+      "aggregation_method": "ratio_or_count",
+      "cases": [
+        "TestInvariantFinalEstimateLeqTotal",
+        "TestInvariantEvictedNeverResurrects",
+        "TestEvictedBufferVisibleBeforeSmallCompact",
+        "TestEvictedBufferRespectsIndependentCap",
+        "TestInvariantSmallFailNoRetryUntilNewEvict",
+        "TestInvariantActiveLargeUniqueAndSmallsAfter",
+        "TestInvariantFactProvenanceAllowed",
+        "TestInvariantNormalCallPrefixStable",
+        "TestInvariantReconstructSkipsCompactLLM",
+        "TestEvictedBufferRefLineageAndSmallAbsorb",
+        "TestPrepareSmallCompactSuccessAndFailure",
+        "TestLargeRollingBaseline",
+        "TestTotalBudgetBoundsEstimate"
+      ]
+    },
+    {
+      "name": "worker_protocol_extra_pass_rate",
+      "value": "3/3",
+      "sample_count": 3,
+      "measurement_unit": "count",
+      "formula": "TurnFinishSchema + HTTP approval/cancel pass / N; NOT part of 13/13",
+      "source": "raw/extra/*.jsonl",
+      "aggregation_method": "ratio_or_count",
+      "cases": [
+        "TestRuntimeContractTurnFinishSchema",
+        "TestRuntimeContractHTTPApprovalReject",
+        "TestRuntimeContractHTTPCancel"
+      ]
+    },
+    {
+      "name": "live_showcase_success_rate",
+      "value": "NOT_RUN",
+      "sample_count": 0,
+      "measurement_unit": "count",
+      "formula": "completed_runs / 4 from scripts/showcase_live.py artifact",
+      "source": "(absent)",
+      "aggregation_method": "ratio_or_count",
+      "cases": []
+    }
+  ],
+  "measurements": [
+    {
+      "raw": "{\\\"EvictedBufferTokens\\\":100000,\\\"SmallTriggerTok\\\":1000000,\\\"TotalTokens\\\":100000,\\\"WindowTokens\\\":40,\\\"buffer_in_assembly\\\":true,\\\"estimated_tokens\\\":488,\\\"evicted_refs\\\":[\\\"f644306c-619a-4b1a-881a-777350831031#1\\\",\\\"f644306c-619a-4b1a-881a-777350831031#2\\\",\\\"f644306c-619a-4b1a-881a-777350831031#3\\\",\\\"f644306c-619a-4b1a-881a-777350831031#4\\\",\\\"f644306c-619a-4b1a-881a-777350831031#5\\\",\\\"f644306c-619a-4b1a-881a-777350831031#6\\\",\\\"f644306c-619a-4b1a-881a-777350831031#7\\\",\\\"f644306c-619a-4b1a-881a-777350831031#8\\\"],\\\"pending_evicted\\\":[\\\"f644306c-619a-4b1a-881a-777350831031#1\\\",\\\"f644306c-619a-4b1a-881a-777350831031#2\\\",\\\"f644306c-619a-4b1a-881a-777350831031#3\\\",\\\"f644306c-619a-4b1a-881a-777350831031#4\\\",\\\"f644306c-619a-4b1a-881a-777350831031#5\\\",\\\"f644306c-619a-4b1a-881a-777350831031#6\\\",\\\"f644306c-619a-4b1a-881a-777350831031#7\\\",\\\"f644306c-619a-4b1a-881a-777350831031#8\\\"],\\\"scenario\\\":\\\"eviction_before_small_compact\\\",\\\"small_compact_count\\\":0}\\n\"}"
+    },
+    {
+      "raw": "{\\\"EvictedBufferTokens\\\":100000,\\\"SmallTriggerTok\\\":1000000,\\\"TotalTokens\\\":100000,\\\"WindowTokens\\\":40,\\\"buffer_in_assembly\\\":true,\\\"estimated_tokens\\\":488,\\\"evicted_refs\\\":[\\\"f644306c-619a-4b1a-881a-777350831031#1\\\",\\\"f644306c-619a-4b1a-881a-777350831031#2\\\",\\\"f644306c-619a-4b1a-881a-777350831031#3\\\",\\\"f644306c-619a-4b1a-881a-777350831031#4\\\",\\\"f644306c-619a-4b1a-881a-777350831031#5\\\",\\\"f644306c-619a-4b1a-881a-777350831031#6\\\",\\\"f644306c-619a-4b1a-881a-777350831031#7\\\",\\\"f644306c-619a-4b1a-881a-777350831031#8\\\"],\\\"pending_evicted\\\":[\\\"f644306c-619a-4b1a-881a-777350831031#1\\\",\\\"f644306c-619a-4b1a-881a-777350831031#2\\\",\\\"f644306c-619a-4b1a-881a-777350831031#3\\\",\\\"f644306c-619a-4b1a-881a-777350831031#4\\\",\\\"f644306c-619a-4b1a-881a-777350831031#5\\\",\\\"f644306c-619a-4b1a-881a-777350831031#6\\\",\\\"f644306c-619a-4b1a-881a-777350831031#7\\\",\\\"f644306c-619a-4b1a-881a-777350831031#8\\\"],\\\"scenario\\\":\\\"eviction_before_small_compact\\\",\\\"small_compact_count\\\":0}\\n\"}"
+    },
+    {
+      "raw": "{\\\"EvictedBufferTokens\\\":8,\\\"TotalTokens\\\":100000,\\\"WindowTokens\\\":40,\\\"buffer_msgs\\\":0,\\\"dropped_oldest\\\":true,\\\"estimated_tokens\\\":0,\\\"evicted_refs\\\":[\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#1\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#2\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#3\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#4\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#5\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#6\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#7\\\"],\\\"scenario\\\":\\\"evicted_buffer_independent_cap\\\"}\\n\"}"
+    },
+    {
+      "raw": "{\\\"EvictedBufferTokens\\\":8,\\\"TotalTokens\\\":100000,\\\"WindowTokens\\\":40,\\\"buffer_msgs\\\":0,\\\"dropped_oldest\\\":true,\\\"estimated_tokens\\\":0,\\\"evicted_refs\\\":[\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#1\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#2\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#3\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#4\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#5\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#6\\\",\\\"0f73a3f3-3433-4d13-95d5-6831ae68b11a#7\\\"],\\\"scenario\\\":\\\"evicted_buffer_independent_cap\\\"}\\n\"}"
+    },
+    {
+      "raw": "{\\\"EvictedBufferTokens\\\":200000,\\\"SmallTriggerTok\\\":1,\\\"TotalTokens\\\":200000,\\\"WindowTokens\\\":20,\\\"absorbed_overlap\\\":8,\\\"buffer_refs\\\":[],\\\"estimated_tokens\\\":138,\\\"evicted_refs\\\":[\\\"42b786da-2731-4a82-8a7b-8a639755a111#1\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#2\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#3\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#4\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#5\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#6\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#7\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#8\\\"],\\\"prepare2_pending\\\":[],\\\"prepare2_smalls\\\":1,\\\"scenario\\\":\\\"evicted_ref_lineage_small_absorb\\\",\\\"small_compact_refs\\\":[\\\"42b786da-2731-4a82-8a7b-8a639755a111#1\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#2\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#3\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#4\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#5\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#6\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#7\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#8\\\"]}\\n\"}"
+    },
+    {
+      "raw": "{\\\"EvictedBufferTokens\\\":200000,\\\"SmallTriggerTok\\\":1,\\\"TotalTokens\\\":200000,\\\"WindowTokens\\\":20,\\\"absorbed_overlap\\\":8,\\\"buffer_refs\\\":[],\\\"estimated_tokens\\\":138,\\\"evicted_refs\\\":[\\\"42b786da-2731-4a82-8a7b-8a639755a111#1\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#2\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#3\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#4\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#5\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#6\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#7\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#8\\\"],\\\"prepare2_pending\\\":[],\\\"prepare2_smalls\\\":1,\\\"scenario\\\":\\\"evicted_ref_lineage_small_absorb\\\",\\\"small_compact_refs\\\":[\\\"42b786da-2731-4a82-8a7b-8a639755a111#1\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#2\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#3\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#4\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#5\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#6\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#7\\\",\\\"42b786da-2731-4a82-8a7b-8a639755a111#8\\\"]}\\n\"}"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "repository": "desk",
+  "commit_sha": "1983e8b336559d61c935f12516951fbb08123bf5",
+  "timestamp": "2026-09-14T14:42:00.538185+00:00",
+  "command": "python3 scripts/collect_verify.py --smoke",
+  "commands": [],
+  "environment": {
+    "HOME": "/home/sancho",
+    "GOTELEMETRY_GOPLS_CLIENT_TOKEN": "[REDACTED]",
+    "USER": "sancho",
+    "ANTHROPIC_AUTH_TOKEN": "[REDACTED]"
+  },
+  "model": {
+    "provider": "deepseek",
+    "flash_model": "",
+    "pro_model": ""
+  },
+  "go_version": "go version go1.26.6 linux/amd64",
+  "smoke": true,
+  "run_dir": "artifacts/runs/20260914T144200Z"
+}

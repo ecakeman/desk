@@ -3,12 +3,80 @@ package ctxmgr
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"desk/internal/event"
 	"desk/internal/ids"
 )
+
+func logMeasurement(t *testing.T, scenario string, payload map[string]any) {
+	t.Helper()
+	payload["scenario"] = scenario
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Printf("::measurement::%s\n", b)
+	t.Logf("::measurement::%s", b)
+}
+
+func refsKey(refs []SourceRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, fmt.Sprintf("%s#%d", r.RunID, r.Seq))
+	}
+	return out
+}
+
+func loadEvictedPayloads(t *testing.T, ev *event.Store, runID string) []SourceRef {
+	t.Helper()
+	events, err := ev.ListAfter(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []SourceRef
+	seen := map[string]bool{}
+	for _, e := range events {
+		if e.Type != event.TypeContextEvicted {
+			continue
+		}
+		var p EvictPayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			continue
+		}
+		for _, r := range p.BasedOn {
+			k := fmt.Sprintf("%s#%d", r.RunID, r.Seq)
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func loadSmallBasedOn(t *testing.T, ev *event.Store, runID string) []SourceRef {
+	t.Helper()
+	events, err := ev.ListAfter(context.Background(), runID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []SourceRef
+	for _, e := range events {
+		if e.Type != event.TypeContextSmallCompact {
+			continue
+		}
+		var p CompactPayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			continue
+		}
+		out = append(out, p.BasedOn...)
+	}
+	return out
+}
 
 func countType(t *testing.T, ev *event.Store, runID, typ string) int {
 	t.Helper()
@@ -135,6 +203,18 @@ func TestEvictedBufferVisibleBeforeSmallCompact(t *testing.T) {
 	if got > m.Settings.TotalTokens && contextAssembly.Applied.OverBudget != "pending_tool" {
 		t.Fatalf("buffer must count in total est %d > %d", got, m.Settings.TotalTokens)
 	}
+	evicted := loadEvictedPayloads(t, ev, runID)
+	logMeasurement(t, "eviction_before_small_compact", map[string]any{
+		"WindowTokens":        m.Settings.WindowTokens,
+		"TotalTokens":         m.Settings.TotalTokens,
+		"EvictedBufferTokens": m.Settings.EvictedBufferTokens,
+		"SmallTriggerTok":     m.Settings.SmallTriggerTok,
+		"estimated_tokens":    got,
+		"evicted_refs":        refsKey(evicted),
+		"pending_evicted":     refsKey(contextAssembly.Applied.PendingEvicted),
+		"buffer_in_assembly":  inMessages,
+		"small_compact_count": countType(t, ev, runID, event.TypeContextSmallCompact),
+	})
 }
 
 func TestEvictedBufferRespectsIndependentCap(t *testing.T) {
@@ -154,11 +234,23 @@ func TestEvictedBufferRespectsIndependentCap(t *testing.T) {
 	if countType(t, ev, runID, event.TypeContextEvicted) < 1 {
 		t.Fatal("expected eviction")
 	}
+	droppedOldest := true
 	for _, msg := range contextAssembly.Layers.Evicted {
 		if strings.Contains(fmtString(msg["content"]), "cap-oldest-") {
+			droppedOldest = false
 			t.Fatal("independent cap should drop oldest evicted from buffer")
 		}
 	}
+	got := EstimateLLMInput("", nil, contextAssembly.Messages, "")
+	logMeasurement(t, "evicted_buffer_independent_cap", map[string]any{
+		"WindowTokens":        m.Settings.WindowTokens,
+		"TotalTokens":         m.Settings.TotalTokens,
+		"EvictedBufferTokens": m.Settings.EvictedBufferTokens,
+		"estimated_tokens":    got,
+		"evicted_refs":        refsKey(loadEvictedPayloads(t, ev, runID)),
+		"dropped_oldest":      droppedOldest,
+		"buffer_msgs":         len(contextAssembly.Layers.Evicted),
+	})
 }
 
 func TestInvariantSmallFailNoRetryUntilNewEvict(t *testing.T) {
@@ -331,4 +423,137 @@ func TestPendingToolMayExceedTotal(t *testing.T) {
 	if len(kept) != 1 || !kept[0].Pending || len(evicted) != 0 {
 		t.Fatalf("pending must stay kept=%d evicted=%d", len(kept), len(evicted))
 	}
+}
+
+func TestEvictedBufferRefLineageAndSmallAbsorb(t *testing.T) {
+	ok := []byte(`{"summary":"会话要维护书签规则与状态文件足够长","facts":[{"key":"goal","value":"write STATUS","status":"active","confidence":0.9,"source_event_seqs":[1]}],"open_items":["STATUS.md"],"decisions":[]}`)
+	stub := &StubCompactor{Raw: ok}
+	m, ev, sessionID, runID := testMgr(t, 20, stub)
+	m.Settings.TotalTokens = 200000
+	m.Settings.EvictedBufferTokens = 200000
+	m.Settings.SmallTriggerTok = 1
+	for i := 0; i < 8; i++ {
+		appendUser(t, ev, runID, strings.Repeat("lineage-payload-", 8)+ids.New())
+	}
+	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evicted := loadEvictedPayloads(t, ev, runID)
+	if len(evicted) < 1 {
+		t.Fatal("expected evicted refs")
+	}
+	pending := a1.Applied.PendingEvicted
+	if countType(t, ev, runID, event.TypeContextSmallCompact) < 1 && len(pending) == 0 {
+		t.Fatal("expected pending evicted or small compact")
+	}
+	based := loadSmallBasedOn(t, ev, runID)
+	if len(based) < 1 {
+		t.Fatal("small compact must record based_on refs")
+	}
+	got := EstimateLLMInput("", nil, a1.Messages, "")
+	absorbed := map[string]bool{}
+	for _, r := range based {
+		absorbed[fmt.Sprintf("%s#%d", r.RunID, r.Seq)] = true
+	}
+	overlap := 0
+	for _, r := range evicted {
+		if absorbed[fmt.Sprintf("%s#%d", r.RunID, r.Seq)] {
+			overlap++
+		}
+	}
+	if overlap < 1 {
+		t.Fatalf("small based_on did not absorb any evicted ref evicted=%v based=%v", refsKey(evicted), refsKey(based))
+	}
+	a2, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logMeasurement(t, "evicted_ref_lineage_small_absorb", map[string]any{
+		"WindowTokens":        m.Settings.WindowTokens,
+		"TotalTokens":         m.Settings.TotalTokens,
+		"EvictedBufferTokens": m.Settings.EvictedBufferTokens,
+		"SmallTriggerTok":     m.Settings.SmallTriggerTok,
+		"estimated_tokens":    got,
+		"evicted_refs":        refsKey(evicted),
+		"buffer_refs":         refsKey(a1.Applied.PendingEvicted),
+		"small_compact_refs":  refsKey(based),
+		"absorbed_overlap":    overlap,
+		"prepare2_pending":    refsKey(a2.Applied.PendingEvicted),
+		"prepare2_smalls":     countType(t, ev, runID, event.TypeContextSmallCompact),
+	})
+}
+
+func TestEvictedPrepareStableNoDuplicateAppend(t *testing.T) {
+	m, ev, sessionID, runID := testMgr(t, 40, &StubCompactor{Err: context.Canceled})
+	m.Settings.TotalTokens = 100000
+	m.Settings.EvictedBufferTokens = 100000
+	m.Settings.SmallTriggerTok = 1_000_000
+	for i := 0; i < 8; i++ {
+		appendUser(t, ev, runID, strings.Repeat("dup-pad-", 8)+ids.New())
+	}
+	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n1 := countType(t, ev, runID, event.TypeContextEvicted)
+	p1 := refsKey(a1.Applied.PendingEvicted)
+	a2, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n2 := countType(t, ev, runID, event.TypeContextEvicted)
+	p2 := refsKey(a2.Applied.PendingEvicted)
+	if n2 != n1 {
+		t.Fatalf("second prepare rewrote eviction %d -> %d", n1, n2)
+	}
+	if len(p2) != len(p1) {
+		t.Fatalf("pending refs changed %v -> %v", p1, p2)
+	}
+	logMeasurement(t, "prepare_stable_no_duplicate_evict", map[string]any{
+		"evicted_event_count": n1,
+		"pending_refs":        p1,
+		"prepare2_pending":    p2,
+		"estimated_tokens":    EstimateLLMInput("", nil, a2.Messages, ""),
+	})
+}
+
+func TestEvictedCompactFailDoesNotResurrect(t *testing.T) {
+	fail := &StubCompactor{Raw: []byte(`not-json`)}
+	m, ev, sessionID, runID := testMgr(t, 20, fail)
+	var first string
+	for i := 0; i < 8; i++ {
+		text := "fail-mark-" + ids.New() + strings.Repeat(" z", 8)
+		if i == 0 {
+			first = text
+		}
+		appendUser(t, ev, runID, text)
+	}
+	a1, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countType(t, ev, runID, event.TypeContextSmallCompact) != 0 {
+		t.Fatal("compact must not write on invalid json")
+	}
+	for _, c := range windowContents(a1) {
+		if strings.Contains(c, first) {
+			t.Fatal("compact fail resurrected oldest into window")
+		}
+	}
+	a2, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range windowContents(a2) {
+		if strings.Contains(c, first) {
+			t.Fatal("second prepare resurrected evicted text")
+		}
+	}
+	logMeasurement(t, "compact_fail_no_resurrect", map[string]any{
+		"small_compact_count": countType(t, ev, runID, event.TypeContextSmallCompact),
+		"compact_failed":      countType(t, ev, runID, event.TypeContextCompactFailed),
+		"evicted_refs":        refsKey(loadEvictedPayloads(t, ev, runID)),
+		"compact_attempts":    fail.N,
+	})
 }
