@@ -107,13 +107,14 @@ func runServe(cfg config.Config) error {
 	svc.Pro = cfg.Pro
 	svc.PromptsDir = cfg.PromptsDir
 	svc.Context = ctxmgr.New(ev, idx, ctxmgr.Settings{
-		WindowTokens:    cfg.WindowTokens,
-		TotalTokens:     cfg.TotalTokens,
-		SmallTriggerTok: cfg.SmallTriggerTok,
-		LargeTriggerTok: cfg.LargeTriggerTok,
-		LargeSmallCount: cfg.LargeSmallCount,
-		RetrievalK:      cfg.RetrievalK,
-		PromptsDir:      cfg.PromptsDir,
+		WindowTokens:        cfg.WindowTokens,
+		TotalTokens:         cfg.TotalTokens,
+		SmallTriggerTok:     cfg.SmallTriggerTok,
+		LargeTriggerTok:     cfg.LargeTriggerTok,
+		LargeSmallCount:     cfg.LargeSmallCount,
+		RetrievalK:          cfg.RetrievalK,
+		EvictedBufferTokens: cfg.EvictedBufferTok,
+		PromptsDir:          cfg.PromptsDir,
 	})
 	if cfg.CompactOK() {
 		svc.Context.Compactor = ctxmgr.NewHTTPCompactor(cfg.Compact.BaseURL, cfg.Compact.APIKey, cfg.Compact.Model)

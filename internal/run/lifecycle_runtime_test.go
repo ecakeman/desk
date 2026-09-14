@@ -45,6 +45,20 @@ func TestRuntimeContractLifecycle(t *testing.T) {
 	)
 }
 
+func TestRuntimeContractTurnFinishSchema(t *testing.T) {
+	w := &recWorker{fn: func(in worker.In) *worker.Out {
+		return &worker.Out{T: "turn.finish", Text: "mixed", Name: "fs.write"}
+	}}
+	work := t.TempDir()
+	runService, db := contractEnv(t, w, work)
+	sessionID := testdb.InsertSession(t, db)
+	runID := postWait(t, runService, db, sessionID, "schema", work, StatusFailed)
+	events := loadEvents(t, db, runID)
+	if hasType(events, event.TypeRunCompleted) || hasType(events, event.TypeMessageCompleted) {
+		t.Fatalf("schema fail must not apply runtime: %v", typesOf(events))
+	}
+}
+
 func TestRuntimeContractToolLifecycle(t *testing.T) {
 	w := &recWorker{fn: func(in worker.In) *worker.Out {
 		if in.T == "turn.start" {

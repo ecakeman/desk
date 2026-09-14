@@ -84,6 +84,82 @@ func TestInvariantEvictedNeverResurrects(t *testing.T) {
 	}
 }
 
+func TestEvictedBufferVisibleBeforeSmallCompact(t *testing.T) {
+	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
+	m.Settings.TotalTokens = 60
+	m.Settings.SmallTriggerTok = 1_000_000
+	var first string
+	for i := 0; i < 8; i++ {
+		text := "buf-" + ids.New() + strings.Repeat(" y", 8)
+		if i == 0 {
+			first = text
+		}
+		appendUser(t, ev, runID, text)
+	}
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countType(t, ev, runID, event.TypeContextEvicted) < 1 {
+		t.Fatal("expected durable eviction")
+	}
+	if countType(t, ev, runID, event.TypeContextSmallCompact) != 0 {
+		t.Fatal("small compact should not run")
+	}
+	inWindow := false
+	for _, c := range windowContents(contextAssembly) {
+		if strings.Contains(c, first) {
+			inWindow = true
+		}
+	}
+	if inWindow {
+		t.Fatal("oldest should have left window")
+	}
+	inBuffer := false
+	inMessages := false
+	for _, msg := range contextAssembly.Layers.Evicted {
+		if strings.Contains(fmtString(msg["content"]), first) {
+			inBuffer = true
+		}
+	}
+	for _, msg := range contextAssembly.Messages {
+		if strings.Contains(fmtString(msg["content"]), first) {
+			inMessages = true
+		}
+	}
+	if !inBuffer || !inMessages {
+		t.Fatalf("evicted buffer missing oldest buffer=%v messages=%v", inBuffer, inMessages)
+	}
+	got := EstimateLLMInput("", nil, contextAssembly.Messages, "")
+	if got > m.Settings.TotalTokens && contextAssembly.Applied.OverBudget != "pending_tool" {
+		t.Fatalf("buffer must count in total est %d > %d", got, m.Settings.TotalTokens)
+	}
+}
+
+func TestEvictedBufferRespectsIndependentCap(t *testing.T) {
+	m, ev, sessionID, runID := testMgr(t, 40, &StubCompactor{Err: context.Canceled})
+	m.Settings.TotalTokens = 100000
+	m.Settings.EvictedBufferTokens = 8
+	m.Settings.SmallTriggerTok = 1_000_000
+	first := "cap-oldest-" + strings.Repeat("z", 40)
+	appendUser(t, ev, runID, first)
+	for i := 0; i < 6; i++ {
+		appendUser(t, ev, runID, strings.Repeat("cap-new-", 8)+ids.New())
+	}
+	contextAssembly, err := m.Prepare(context.Background(), PrepareIn{SessionID: sessionID, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countType(t, ev, runID, event.TypeContextEvicted) < 1 {
+		t.Fatal("expected eviction")
+	}
+	for _, msg := range contextAssembly.Layers.Evicted {
+		if strings.Contains(fmtString(msg["content"]), "cap-oldest-") {
+			t.Fatal("independent cap should drop oldest evicted from buffer")
+		}
+	}
+}
+
 func TestInvariantSmallFailNoRetryUntilNewEvict(t *testing.T) {
 	fail := &StubCompactor{Raw: []byte(`not-json`)}
 	m, ev, sessionID, runID := testMgr(t, 20, fail)

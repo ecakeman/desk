@@ -93,14 +93,16 @@ type ToolSpec struct {
 // Settings 是窗口与触发阈值（估算单位）。
 // TotalTokens 是硬上限；WindowTokens 是 raw recent 的 preferred max。
 // windowBudget = min(Window, max(0, Total-system-tools-stable-dynamic))。
+// EvictedBufferTokens 是 Buffer 独立上限，再与 Total 余量取 min；不改变 skipSet。
 type Settings struct {
-	WindowTokens    int
-	TotalTokens     int
-	SmallTriggerTok int
-	LargeTriggerTok int
-	LargeSmallCount int
-	RetrievalK      int
-	PromptsDir      string
+	WindowTokens        int
+	TotalTokens         int
+	EvictedBufferTokens int
+	SmallTriggerTok     int
+	LargeTriggerTok     int
+	LargeSmallCount     int
+	RetrievalK          int
+	PromptsDir          string
 }
 
 func (s Settings) withDefaults() Settings {
@@ -122,6 +124,9 @@ func (s Settings) withDefaults() Settings {
 	}
 	if out.RetrievalK <= 0 {
 		out.RetrievalK = 8
+	}
+	if out.EvictedBufferTokens <= 0 {
+		out.EvictedBufferTokens = out.WindowTokens
 	}
 	return out
 }

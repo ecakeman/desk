@@ -15,29 +15,30 @@ type ModelConfig struct {
 
 // Config 是 desk serve 的全部进程配置。
 type Config struct {
-	HTTPAddr        string
-	Workspace       string
-	DatabaseURL     string
-	MigrationsDir   string
-	PluginsDir      string
-	PromptsDir      string
-	WebDir          string
-	Python          string
-	Agent           string
-	Model           ModelConfig
-	Flash           ModelConfig
-	Pro             ModelConfig
-	Embed           ModelConfig
-	EmbedDim        int
-	Rerank          ModelConfig
-	RerankTimeoutMS int
-	Compact         ModelConfig
-	WindowTokens    int
-	TotalTokens     int
-	SmallTriggerTok int
-	LargeTriggerTok int
-	LargeSmallCount int
-	RetrievalK      int
+	HTTPAddr         string
+	Workspace        string
+	DatabaseURL      string
+	MigrationsDir    string
+	PluginsDir       string
+	PromptsDir       string
+	WebDir           string
+	Python           string
+	Agent            string
+	Model            ModelConfig
+	Flash            ModelConfig
+	Pro              ModelConfig
+	Embed            ModelConfig
+	EmbedDim         int
+	Rerank           ModelConfig
+	RerankTimeoutMS  int
+	Compact          ModelConfig
+	WindowTokens     int
+	TotalTokens      int
+	SmallTriggerTok  int
+	LargeTriggerTok  int
+	LargeSmallCount  int
+	RetrievalK       int
+	EvictedBufferTok int
 }
 
 // Load 先读 .env 再读环境变量；已存在的环境变量不被 .env 覆盖。
@@ -86,12 +87,13 @@ func Load() Config {
 			Model:   getenv("DESK_FLASH_MODEL", getenv("DESK_MODEL_MODEL", "")),
 		}),
 		// Total 硬上限；Window 是 raw recent 的 preferred max（实际窗口取 min(Window, Total-stable-dynamic)）。
-		WindowTokens:    getenvInt("DESK_CTX_WINDOW_TOKENS", 4000),
-		TotalTokens:     getenvInt("DESK_CTX_TOTAL_TOKENS", 12000),
-		SmallTriggerTok: getenvInt("DESK_CTX_SMALL_TRIGGER_TOKENS", 400),
-		LargeTriggerTok: getenvInt("DESK_CTX_LARGE_TRIGGER_TOKENS", 1200),
-		LargeSmallCount: getenvInt("DESK_CTX_LARGE_SMALL_COUNT", 3),
-		RetrievalK:      getenvInt("DESK_CTX_RETRIEVAL_K", 8),
+		WindowTokens:     getenvInt("DESK_CTX_WINDOW_TOKENS", 4000),
+		TotalTokens:      getenvInt("DESK_CTX_TOTAL_TOKENS", 12000),
+		SmallTriggerTok:  getenvInt("DESK_CTX_SMALL_TRIGGER_TOKENS", 400),
+		LargeTriggerTok:  getenvInt("DESK_CTX_LARGE_TRIGGER_TOKENS", 1200),
+		LargeSmallCount:  getenvInt("DESK_CTX_LARGE_SMALL_COUNT", 3),
+		RetrievalK:       getenvInt("DESK_CTX_RETRIEVAL_K", 8),
+		EvictedBufferTok: getenvInt("DESK_CTX_EVICTED_BUFFER_TOKENS", 0),
 	}
 	return c
 }

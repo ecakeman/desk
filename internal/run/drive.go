@@ -119,6 +119,10 @@ func (service *Service) Drive(requestContext context.Context, runID string) erro
 				return err
 			}
 		case "turn.finish":
+			// 完整 Out 才校验；delta 已在 ask 里落事件，不在这里。
+			if err := validateTurnFinish(workerOutput); err != nil {
+				return err
+			}
 			return service.finish(requestContext, runID, workerOutput.Text, currentModelSlot, currentPhase, promptSnapshot.Hash())
 		case "turn.fail":
 			return fmt.Errorf("%s", workerOutput.Error)

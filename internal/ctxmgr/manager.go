@@ -39,6 +39,7 @@ type InspectLayers struct {
 	Large          []map[string]any `json:"large"`
 	Smalls         []map[string]any `json:"smalls"`
 	Facts          []map[string]any `json:"facts"`
+	Evicted        []map[string]any `json:"evicted_buffer,omitempty"`
 	Window         []map[string]any `json:"recent_window"`
 	Skill          []map[string]any `json:"skill"`
 	Retrieval      []map[string]any `json:"retrieval"`
@@ -297,21 +298,29 @@ func (manager *Manager) compactReady(settings Settings) bool {
 	return manager != nil && manager.Compactor != nil && settings.PromptsDir != ""
 }
 
-func (manager *Manager) pendingSmallUnits(events []event.Event, runID, pendingToolID string, settings Settings) (bool, []contextUnit) {
+func (manager *Manager) pendingEvictedUnits(events []event.Event, runID, pendingToolID string) []contextUnit {
 	refs := pendingEvictedRefs(events)
 	if len(refs) == 0 {
-		return false, nil
+		return nil
 	}
 	allowedSources := allowedMap(refs)
 	allWindowUnits := buildUnits(events, runID, pendingToolID, skipCompacted(events))
-	var smallCompactUnits []contextUnit
-	for _, u := range allWindowUnits {
-		for _, it := range u.Items {
-			if _, ok := allowedSources[sourceKey(it.Ref)]; ok {
-				smallCompactUnits = append(smallCompactUnits, u)
+	var evictedUnits []contextUnit
+	for _, windowUnit := range allWindowUnits {
+		for _, item := range windowUnit.Items {
+			if _, ok := allowedSources[sourceKey(item.Ref)]; ok {
+				evictedUnits = append(evictedUnits, windowUnit)
 				break
 			}
 		}
+	}
+	return evictedUnits
+}
+
+func (manager *Manager) pendingSmallUnits(events []event.Event, runID, pendingToolID string, settings Settings) (bool, []contextUnit) {
+	smallCompactUnits := manager.pendingEvictedUnits(events, runID, pendingToolID)
+	if len(smallCompactUnits) == 0 {
+		return false, nil
 	}
 	if EstimateTokens(joinUnits(smallCompactUnits)) < settings.SmallTriggerTok {
 		return false, smallCompactUnits
@@ -484,7 +493,8 @@ func (manager *Manager) assemble(requestContext context.Context, prepareInput Pr
 		omitFacts = true
 		stable = stableMsgs(layers, false)
 	}
-	for reserved+EstimateMessages(stable)+EstimateMessages(unitMsgs(window))+dynamicTailTokens() > settings.TotalTokens {
+	evictedUnits := manager.pendingEvictedUnits(events, prepareInput.RunID, prepareInput.PendingTool)
+	for reserved+EstimateMessages(stable)+EstimateMessages(unitMsgs(window))+EstimateMessages(unitMsgs(evictedUnits))+dynamicTailTokens() > settings.TotalTokens {
 		if len(retrievalMessages) > 0 {
 			retrievalMessages = nil
 			continue
@@ -495,6 +505,14 @@ func (manager *Manager) assemble(requestContext context.Context, prepareInput Pr
 		}
 		break
 	}
+	bufferBudget := settings.TotalTokens - reserved - EstimateMessages(stable) - EstimateMessages(unitMsgs(window)) - dynamicTailTokens()
+	if bufferBudget < 0 {
+		bufferBudget = 0
+	}
+	if settings.EvictedBufferTokens > 0 && bufferBudget > settings.EvictedBufferTokens {
+		bufferBudget = settings.EvictedBufferTokens
+	}
+	evictedUnits, _ = splitUnits(evictedUnits, bufferBudget)
 	var inspectLayers InspectLayers
 	if layers.large != nil {
 		inspectLayers.Large = []map[string]any{compactBlock("LARGE", *layers.large)}
@@ -508,7 +526,9 @@ func (manager *Manager) assemble(requestContext context.Context, prepareInput Pr
 		}
 	}
 	windowMessages := unitMsgs(window)
+	evictedMessages := unitMsgs(evictedUnits)
 	inspectLayers.Window = windowMessages
+	inspectLayers.Evicted = evictedMessages
 	inspectLayers.Skill = skills
 	inspectLayers.Retrieval = retrievalMessages
 	inspectLayers.PendingEvicted = pendingEvictedRefs(events)
@@ -517,6 +537,7 @@ func (manager *Manager) assemble(requestContext context.Context, prepareInput Pr
 	}
 	var assembledMessages []map[string]any
 	assembledMessages = append(assembledMessages, stable...)
+	assembledMessages = append(assembledMessages, evictedMessages...)
 	assembledMessages = append(assembledMessages, windowMessages...)
 	assembledMessages = append(assembledMessages, skills...)
 	assembledMessages = append(assembledMessages, retrievalMessages...)

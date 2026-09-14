@@ -37,3 +37,7 @@ internal/plugin/smoke.go
 coverage.out
 coverage.html
 .DS_Store
+
+# 个人啃读笔记，不进仓库
+/notes/
+/temp.md
