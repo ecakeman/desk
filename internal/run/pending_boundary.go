@@ -3,8 +3,9 @@ package run
 import "desk/internal/ctxmgr"
 
 // pendingToolBoundary 把 Context Rebuild 拆成：
-//   replaceMessages — durable 前缀，以 pending assistant(tool_calls) 结尾
-//   deferredMessages — skill / retrieval 等动态 suffix，须在 tool.result 之后注入
+//
+//	replaceMessages — durable 前缀，以 pending assistant(tool_calls) 结尾
+//	deferredMessages — skill / retrieval 等动态 suffix，须在 tool.result 之后注入
 //
 // pending assistant(tool_calls) 是不可被 Assembly 插入打断的协议边界。
 type pendingToolBoundary struct {
