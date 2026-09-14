@@ -85,8 +85,9 @@ func TestInvariantEvictedNeverResurrects(t *testing.T) {
 }
 
 func TestEvictedBufferVisibleBeforeSmallCompact(t *testing.T) {
-	m, ev, sessionID, runID := testMgr(t, 100000, &StubCompactor{Err: context.Canceled})
-	m.Settings.TotalTokens = 60
+	m, ev, sessionID, runID := testMgr(t, 40, &StubCompactor{Err: context.Canceled})
+	m.Settings.TotalTokens = 100000
+	m.Settings.EvictedBufferTokens = 100000
 	m.Settings.SmallTriggerTok = 1_000_000
 	var first string
 	for i := 0; i < 8; i++ {
